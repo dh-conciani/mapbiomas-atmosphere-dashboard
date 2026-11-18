@@ -1,0 +1,51 @@
+{
+  "brazil": {
+    "xlsx_territories": 1,
+    "features_in_geojson": 1,
+    "matched": 1,
+    "match_rate": 1.0,
+    "megabytes": 0.42
+  },
+  "regions": {
+    "xlsx_territories": 5,
+    "features_in_geojson": 5,
+    "matched": 5,
+    "match_rate": 1.0,
+    "megabytes": 0.73
+  },
+  "states": {
+    "xlsx_territories": 27,
+    "features_in_geojson": 27,
+    "matched": 27,
+    "match_rate": 1.0,
+    "megabytes": 1.27
+  },
+  "biomes": {
+    "xlsx_territories": 6,
+    "features_in_geojson": 6,
+    "matched": 6,
+    "match_rate": 1.0,
+    "megabytes": 1.74
+  },
+  "legal_amazon": {
+    "xlsx_territories": 1,
+    "features_in_geojson": 1,
+    "matched": 1,
+    "match_rate": 1.0,
+    "megabytes": 0.27
+  },
+  "matopiba": {
+    "xlsx_territories": 1,
+    "features_in_geojson": 1,
+    "matched": 1,
+    "match_rate": 1.0,
+    "megabytes": 0.07
+  },
+  "hidrographic_regions": {
+    "xlsx_territories": 12,
+    "features_in_geojson": 12,
+    "matched": 12,
+    "match_rate": 1.0,
+    "megabytes": 1.03
+  }
+}
