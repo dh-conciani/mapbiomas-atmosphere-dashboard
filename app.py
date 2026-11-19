@@ -66,20 +66,73 @@ def metric_label(metric, metadata):
     return f'{metric}  [{unit}]' if unit else metric
 
 
-def geo_bounds(features):
-    xs,ys=[],[]
-    def walk(v):
-        if not v:return
-        if isinstance(v[0],(int,float)) and len(v)>=2:
-            xs.append(v[0]);ys.append(v[1]);return
-        for child in v: walk(child)
-    for f in features: walk(f['geometry']['coordinates'])
-    if not xs:return {'lat':-12,'lon':-54},4
-    center={'lat':(min(ys)+max(ys))/2,'lon':(min(xs)+max(xs))/2}
-    extent=max(max(xs)-min(xs), (max(ys)-min(ys))*1.6,1)
-    zoom=float(np.clip(np.log2(360/extent)-1.25,2.0,10.5))
-    return center,zoom
+def _polygon_parts(geometry):
+    """Yield polygon coordinate arrays from valid GeoJSON polygonal geometry.
 
+    Earth Engine GeoJSON may contain nested GeometryCollections, which expose
+    `geometries` instead of `coordinates`. Plotly maps need Polygon/MultiPolygon.
+    Non-polygonal members (points/lines) are intentionally not mapped as fills.
+    """
+    if not isinstance(geometry, dict):
+        return
+    geom_type = geometry.get('type')
+    if geom_type == 'Polygon':
+        coordinates = geometry.get('coordinates')
+        if isinstance(coordinates, list) and coordinates:
+            yield coordinates
+    elif geom_type == 'MultiPolygon':
+        for polygon in geometry.get('coordinates') or []:
+            if isinstance(polygon, list) and polygon:
+                yield polygon
+    elif geom_type == 'GeometryCollection':
+        for child in geometry.get('geometries') or []:
+            yield from _polygon_parts(child)
+
+
+def polygonal_geometry(geometry):
+    """Normalize polygons and polygon-containing GeometryCollections for Plotly.
+
+    Coordinates are reused unmodified; no geometric simplification or
+    aggregation of metric values occurs here.
+    """
+    polygons = list(_polygon_parts(geometry))
+    if not polygons:
+        return None
+    if len(polygons) == 1:
+        return {'type': 'Polygon', 'coordinates': polygons[0]}
+    return {'type': 'MultiPolygon', 'coordinates': polygons}
+
+
+def geo_bounds(features):
+    """Return (center, zoom) from polygon geometries; tolerate absent geometry."""
+    xs, ys = [], []
+
+    def walk(coordinates):
+        if not isinstance(coordinates, (list, tuple)) or not coordinates:
+            return
+        if (len(coordinates) >= 2
+                and isinstance(coordinates[0], (int, float))
+                and isinstance(coordinates[1], (int, float))
+                and np.isfinite(coordinates[0])
+                and np.isfinite(coordinates[1])):
+            xs.append(float(coordinates[0]))
+            ys.append(float(coordinates[1]))
+            return
+        for child in coordinates:
+            walk(child)
+
+    for feature in features:
+        geometry = polygonal_geometry(feature.get('geometry'))
+        if geometry is not None:
+            walk(geometry['coordinates'])
+
+    if not xs:
+        return {'lat': -12, 'lon': -54}, 4
+    center = {'lat': (min(ys) + max(ys)) / 2,
+              'lon': (min(xs) + max(xs)) / 2}
+    extent = max(max(xs) - min(xs), (max(ys) - min(ys)) * 1.6, 1)
+    zoom = float(np.clip(np.log2(360 / extent) - 1.25, 2.0, 10.5))
+    return center, zoom
 
 def numberfmt(m,meta):
     grp=meta.get(m,{}).get('group','')
@@ -206,7 +259,19 @@ with map_col:
         if map_month is not None:map_data=map_data[map_data.month==map_month]
         map_data=map_data[['territory_id','territory_label',map_var]].drop_duplicates('territory_id')
         value_ids=set(map_data.territory_id)
-        selected_feats=[f for f in geo['features'] if str(f.get('properties',{}).get('territory_id','')) in value_ids]
+        matching_feats=[f for f in geo.get('features', []) if str(f.get('properties',{}).get('territory_id','')) in value_ids]
+        selected_feats=[]
+        skipped_geometries=0
+        for feature in matching_feats:
+            polygon_geometry=polygonal_geometry(feature.get('geometry'))
+            if polygon_geometry is None:
+                skipped_geometries+=1
+                continue
+            selected_feats.append({'type':'Feature',
+                                   'properties':feature.get('properties',{}),
+                                   'geometry':polygon_geometry})
+        if skipped_geometries:
+            st.warning(f'{skipped_geometries:,} geometries without usable polygon coordinates were skipped in the map. Statistics and charts remain available.')
         if len(selected_feats)>450:
             st.info(f'{len(selected_feats):,} polygons selected. Showing the first 450 on the map for browser performance; filter the units to view the rest. Charts retain all selected data.')
             selected_feats=selected_feats[:450]
