@@ -1,4 +1,4 @@
-"""MapBiomas Atmosphere Explorer — analytical dashboard (v2).
+"""MapBiomas Atmosphere Explorer — analytical dashboard (v3).
 
 Reads the original XLSX-derived, year-partitioned Parquet tables and genuine
 Earth Engine GeoJSON geometries. No scientific data are modified or estimated.
@@ -15,6 +15,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from scipy import stats
 
 BASE = Path(__file__).resolve().parent / "data"
 PERIODS = ["Annual", "Monthly", "Multiyear"]
@@ -252,23 +253,115 @@ def observations_at(frame, year, month, period, metric):
     return subset
 
 
+def format_p(p):
+    """Format p-values without displaying very small probabilities as zero."""
+    if p is None or not np.isfinite(p):
+        return "n/a"
+    if p <= 0:
+        return "<1e-300"
+    return f"{p:.2e}" if p < .001 else f"{p:.4f}"
+
+
 def linear_regression(frame, x, y):
-    data = frame[[x, y]].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
-    if len(data) < 3 or data[x].nunique() < 2:
+    """Simple OLS + two-sided nominal p-value for the slope/Pearson association.
+
+    IMPORTANT: Inferential statistics assume independent observations. When the
+    same territory contributes repeated years/months, p-values are exploratory,
+    not temporally/spatially robust.
+    """
+    data = (frame[[x, y]].apply(pd.to_numeric, errors="coerce")
+            .replace([np.inf, -np.inf], np.nan).dropna())
+    if len(data) < 3 or data[x].nunique() < 2 or data[y].nunique() < 2:
         return None
     xa, ya = data[x].to_numpy(dtype=float), data[y].to_numpy(dtype=float)
-    if np.var(ya) == 0:
+    try:
+        fitted = stats.linregress(xa, ya, alternative="two-sided")
+    except (ValueError, FloatingPointError):
         return None
-    slope, intercept = np.polyfit(xa, ya, deg=1)
-    predicted = slope * xa + intercept
-    denominator = np.sum((ya - ya.mean()) ** 2)
-    if denominator <= 0:
+    if not all(np.isfinite(v) for v in
+               (fitted.slope, fitted.intercept, fitted.rvalue, fitted.pvalue, fitted.stderr)):
         return None
-    r2 = float(1 - np.sum((ya - predicted) ** 2) / denominator)
-    if not np.isfinite(r2):
-        return None
-    return {"slope": float(slope), "intercept": float(intercept), "r2": r2, "n": len(data),
-            "xmin": float(xa.min()), "xmax": float(xa.max())}
+    tcrit = stats.t.ppf(.975, df=len(data) - 2)
+    delta = tcrit * fitted.stderr
+    return {
+        "slope": float(fitted.slope),
+        "intercept": float(fitted.intercept),
+        "r": float(fitted.rvalue),
+        "r2": float(fitted.rvalue ** 2),
+        "p_value": float(fitted.pvalue),
+        "ci95_low": float(fitted.slope - delta),
+        "ci95_high": float(fitted.slope + delta),
+        "n": len(data),
+        "xmin": float(xa.min()),
+        "xmax": float(xa.max()),
+    }
+
+
+def correlation_tests(frame, variables):
+    """Pairwise-complete Pearson r, nominal two-sided p and Benjamini–Hochberg q.
+
+    BH adjustment is performed across the unique OFF-DIAGONAL pairs in the
+    currently selected correlation matrix. Rows are assumed independent for the
+    p-values; this is not generally satisfied by repeated territorial records.
+    """
+    data = (frame[list(variables)].apply(pd.to_numeric, errors="coerce")
+            .replace([np.inf, -np.inf], np.nan))
+    k = len(variables)
+    r = np.full((k, k), np.nan, dtype=float)
+    p = np.full((k, k), np.nan, dtype=float)
+    q = np.full((k, k), np.nan, dtype=float)
+    n = np.zeros((k, k), dtype=int)
+    tested = []
+    for i, a in enumerate(variables):
+        valid = data[a].dropna()
+        n[i, i] = len(valid)
+        if len(valid) >= 2 and valid.nunique() >= 2:
+            r[i, i] = 1.0
+        for j in range(i+1, k):
+            b = variables[j]
+            pair = data[[a, b]].dropna()
+            n[i, j] = n[j, i] = len(pair)
+            if len(pair) < 3 or pair[a].nunique() < 2 or pair[b].nunique() < 2:
+                continue
+            try:
+                coefficient, pvalue = stats.pearsonr(pair[a].to_numpy(dtype=float),
+                                                    pair[b].to_numpy(dtype=float),
+                                                    alternative="two-sided")
+            except ValueError:
+                continue
+            if np.isfinite(coefficient) and np.isfinite(pvalue):
+                r[i, j] = r[j, i] = float(coefficient)
+                p[i, j] = p[j, i] = float(pvalue)
+                tested.append((i, j, a, b, len(pair), float(coefficient), float(pvalue)))
+
+    # False discovery rate (Benjamini-Hochberg) across the tested metric pairs.
+    if tested:
+        values = np.array([record[6] for record in tested], dtype=float)
+        order = np.argsort(values)
+        m = len(values)
+        ordered_q = np.minimum.accumulate((values[order] * m / np.arange(1, m+1))[::-1])[::-1]
+        qvalues = np.empty_like(values)
+        qvalues[order] = np.clip(ordered_q, 0, 1)
+    else:
+        qvalues = np.array([], dtype=float)
+
+    table_rows = []
+    for record, qvalue in zip(tested, qvalues):
+        i, j, a, b, valid_n, corr_value, pvalue = record
+        q[i, j] = q[j, i] = float(qvalue)
+        table_rows.append({
+            "Variable X": a,
+            "Variable Y": b,
+            "Pearson r": corr_value,
+            "n (paired)": valid_n,
+            "p (nominal, two-sided)": pvalue,
+            "q (FDR-BH)": float(qvalue),
+            "q < 0.05": bool(qvalue < .05),
+        })
+    table = pd.DataFrame(table_rows)
+    if not table.empty:
+        table = table.sort_values(["q (FDR-BH)", "p (nominal, two-sided)"]).reset_index(drop=True)
+    return r, p, q, n, table
 
 
 def prepare_long(filtered, chosen, period, metadata):
@@ -660,27 +753,37 @@ if len(selected) >= 2:
             if fit:
                 xx = np.linspace(fit["xmin"], fit["xmax"], 100)
                 yy = fit["slope"] * xx + fit["intercept"]
-                fig.add_trace(go.Scatter(x=xx, y=yy, mode="lines", name=f"OLS fit · R²={fit['r2']:.3f}",
+                fig.add_trace(go.Scatter(x=xx, y=yy, mode="lines", name=f"OLS · R²={fit['r2']:.3f} · p={format_p(fit['p_value'])}",
                     line=dict(color="#1B364A", width=3, dash="dash"), hovertemplate="OLS fitted line<extra></extra>"))
             st.plotly_chart(prettify(fig, 470), use_container_width=True)
         with statscol:
             st.markdown("**Pooled ordinary least squares**")
             if fit:
                 st.metric("Linear R²", f"{fit['r2']:.3f}")
+                st.metric("Pearson r", f"{fit['r']:+.3f}")
+                st.metric("p-value (two-sided; nominal)", format_p(fit["p_value"]))
                 st.metric("Slope (β₁)", f"{fit['slope']:,.4g}")
-                st.metric("Sample size", f"{fit['n']:,}")
+                st.metric("Sample size (rows)", f"{fit['n']:,}")
                 st.caption(f"ŷ = {fit['intercept']:.4g} + ({fit['slope']:.4g}) × X")
+                st.caption(f"95% CI for slope: [{fit['ci95_low']:.4g}, {fit['ci95_high']:.4g}]")
+                st.caption("H₀: β₁ = 0 (equivalently Pearson r = 0 in simple OLS with an intercept).")
+                if fit["p_value"] < .05:
+                    st.caption("Nominal p < 0.05 under an independence assumption; not causal evidence.")
             else:
-                st.info("R² unavailable: at least three valid points and variation in X and Y are required.")
-            st.caption("Pooled regression is descriptive, not causal. Repeated years from the same territory are not statistically independent.")
+                st.info("Statistics unavailable: at least three complete observations and variation in both X and Y are required.")
+            st.warning("Inference caution: nominal p-values and confidence intervals assume independent errors. Repeated years/months within territories, temporal trends and spatial dependence violate this assumption; these results are exploratory, not robust tests of causality or significance.", icon="⚠️")
         if scatter.territory_id.nunique() > 1:
-            with st.expander("Linear regressions by territory (R²)", expanded=False):
+            with st.expander("Linear regressions by territory (R², p-value, CI)", expanded=False):
                 rows = []
                 for tid, part in scatter.groupby("territory_id"):
                     fitted = linear_regression(part, xvar, yvar)
                     if fitted:
                         rows.append({"Territory": label_of.get(tid, tid), "n": fitted["n"],
-                                     "Slope": fitted["slope"], "Intercept": fitted["intercept"], "R²": fitted["r2"]})
+                                     "Slope": fitted["slope"], "Intercept": fitted["intercept"],
+                                     "Pearson r": fitted["r"], "R²": fitted["r2"],
+                                     "p (two-sided, nominal)": fitted["p_value"],
+                                     "Slope CI95 lower": fitted["ci95_low"],
+                                     "Slope CI95 upper": fitted["ci95_high"]})
                 if rows:
                     st.dataframe(pd.DataFrame(rows).sort_values("R²", ascending=False), hide_index=True, use_container_width=True)
                 else:
@@ -713,21 +816,50 @@ with corr_cols[0]:
         default=correlation_choices[:min(10, len(correlation_choices))],
         format_func=lambda m: metric_label(m, meta), key=f"corr_{level}_{period}")
     if len(corr_sel) >= 2:
-        corr = filtered[corr_sel].apply(pd.to_numeric, errors="coerce").corr(min_periods=4)
-        if corr.notna().any().any():
-            fig = px.imshow(corr, color_continuous_scale=DIVERGING,
-                zmin=-1, zmax=1, text_auto=".2f" if len(corr_sel) <= 12 else False,
-                aspect="auto", labels=dict(color="Pearson r", x="Variable", y="Variable"))
-            fig.update_layout(height=max(440, len(corr_sel) * 34 + 180), margin=dict(l=10, r=10, t=25, b=10))
+        rmat, pmat, qmat, nmat, pair_table = correlation_tests(filtered, corr_sel)
+        if not pair_table.empty:
+            k = len(corr_sel)
+            hdata = np.empty((k, k, 3), dtype=object)
+            labels = np.empty((k, k), dtype=object)
+            for i in range(k):
+                for j in range(k):
+                    hdata[i, j] = [format_p(pmat[i, j]), format_p(qmat[i, j]), str(nmat[i, j])]
+                    if np.isfinite(rmat[i, j]) and k <= 12:
+                        significant = i != j and np.isfinite(qmat[i, j]) and qmat[i, j] < .05
+                        labels[i, j] = f"{rmat[i, j]:.2f}" + ("*" if significant else "")
+                    else:
+                        labels[i, j] = ""
+            heatmap = go.Heatmap(
+                z=rmat, x=corr_sel, y=corr_sel, zmin=-1, zmax=1, zmid=0,
+                colorscale=DIVERGING, colorbar=dict(title="Pearson r"),
+                customdata=hdata, text=labels,
+                hovertemplate=("X: %{x}<br>Y: %{y}<br>Pearson r: %{z:.3f}"
+                               "<br>p (nominal, two-sided): %{customdata[0]}"
+                               "<br>q (FDR-BH): %{customdata[1]}"
+                               "<br>n (paired observations): %{customdata[2]}<extra></extra>"),
+            )
+            heatmap.texttemplate = "%{text}" if k <= 12 else None
+            fig = go.Figure(data=[heatmap])
+            fig.update_layout(height=max(440, k * 35 + 180),
+                              margin=dict(l=10, r=10, t=35, b=10),
+                              font=dict(family="Arial", color="#234153"))
+            fig.update_yaxes(autorange="reversed")
             st.plotly_chart(fig, use_container_width=True)
+            st.caption("* marks off-diagonal correlations with FDR-BH q < 0.05. Hover over a cell for nominal p, adjusted q and paired n. Diagonal cells have no hypothesis test.")
+            with st.expander("Pairwise correlations · p-values and FDR-adjusted q-values", expanded=False):
+                st.dataframe(pair_table, use_container_width=True, hide_index=True)
+                st.download_button("Download correlation tests (.csv)",
+                    pair_table.to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"mapbiomas_correlations_{level}_{period.lower()}.csv", mime="text/csv")
         else:
-            st.info("Not enough independent variation to calculate correlations.")
+            st.info("No eligible correlation pairs: each test needs at least three paired observations and variation in both metrics.")
     else:
         st.info("Choose at least two metrics to calculate Pearson correlations.")
 with corr_cols[1]:
     st.markdown("**Cross-variable analysis**")
     st.caption("The Pearson matrix uses all observations in the selected time and territorial filters. The blue–neutral–warm diverging scale is always fixed at −1…+1.")
-    st.caption("Correlations are descriptive; trends, autocorrelation and spatial dependence can cause misleading pooled associations.")
+    st.caption("The p-value tests H₀: Pearson r = 0 (two-sided). q-values control the Benjamini–Hochberg false discovery rate across the tested pairs in the visible matrix.")
+    st.caption("These p-values assume independent observations and are exploratory for time-series and repeated territories. Multiple-testing adjustment does not correct temporal or spatial dependence.")
     if period == "Monthly" and len(selected):
         st.markdown("**Monthly seasonal profile**")
         seas_var = st.selectbox("Seasonal metric", selected, format_func=lambda m: metric_label(m, meta), key=f"season_{level}")
@@ -756,6 +888,8 @@ with st.expander("Methods · metric dictionary · licensing"):
 **Geography:** territorial geometries are genuine GEE exports, normalized only to polygonal GeoJSON types for Plotly display.
 
 **Visualization only:** paired differences, percentages, z-scores, Pearson correlations and ordinary least-squares regressions are calculated dynamically from the selected observations. No transformations overwrite the underlying data.
+
+**Statistical inference:** nominal two-sided p-values for Pearson r and the simple OLS slope are computed using SciPy; the slope 95% confidence interval uses the Student t distribution. Correlation-matrix q-values use Benjamini–Hochberg adjustment across the valid off-diagonal variable pairs. These significance calculations presume independent observations and do **not** correct for trends, serial correlation, shared territory, heteroskedasticity or spatial dependence. Treat them as exploratory until an appropriate time-series/panel-data model is fitted.
 
 **Palettes:** brand colors are documented in the [MapBiomas identity guide](https://brasil.mapbiomas.org/wp-content/uploads/sites/4/2024/10/manual-de-marca_MapBiomas_PT_versao-site_16.10.24.pdf). The [land-cover class legend](https://brasil.mapbiomas.org/iniciativas-e-produtos/cobertura-e-uso-da-terra/cobertura-30m/cobertura/) is categorical and does not determine continuous atmospheric color scales. Continuous colors in this dashboard are designed to be semantically consistent; they are not claimed to reproduce the exact map styles of every official MapBiomas Atmosphere layer.
 """)
