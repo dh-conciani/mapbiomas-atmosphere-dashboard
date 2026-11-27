@@ -1,9 +1,13 @@
-"""MapBiomas Atmosphere Explorer — analytical dashboard (v3).
+"""MapBiomas Atmosphere Explorer — analytical dashboard (v4 · redesigned UI).
 
 Reads the original XLSX-derived, year-partitioned Parquet tables and genuine
 Earth Engine GeoJSON geometries. No scientific data are modified or estimated.
 Visualization palettes adopt documented MapBiomas brand colors, while numerical
 maps use continuous scales appropriate to their variables.
+
+v4: bilingual interface (Portuguese by default, English optional), redesigned
+layout with tabbed analysis sections, modern controls and a unified visual
+style. Statistical routines and data handling are unchanged from v3.
 """
 from __future__ import annotations
 
@@ -17,9 +21,10 @@ import plotly.graph_objects as go
 import streamlit as st
 from scipy import stats
 
+import i18n
+
 BASE = Path(__file__).resolve().parent / "data"
 PERIODS = ["Annual", "Monthly", "Multiyear"]
-MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 # Verified MapBiomas institution-wide identity colors. These are NOT categorical
 # map legends for atmospheric products, which are continuous measurements.
@@ -41,27 +46,172 @@ SEQUENTIAL = {
     "air": ["#FAF6FC", "#DBCCE9", "#B99BCC", "#8064A8", "#48316A"],
     "other": ["#F4F7F8", "#C1D9D9", "#62A5BB", "#438494", "#235360"],
 }
+FONT_FAMILY = "Inter, 'Segoe UI', Roboto, Arial, sans-serif"
+INK = "#163548"
 
-st.set_page_config(page_title="MapBiomas Atmosphere Explorer", page_icon="🌎", layout="wide", initial_sidebar_state="expanded")
+# ------------------------------- Language ----------------------------------
+# Portuguese is the default; ?lang=en in the URL (or the header toggle) switches.
+if "lang" not in st.session_state:
+    requested = str(st.query_params.get("lang", i18n.DEFAULT_LANG)).lower()
+    st.session_state["lang"] = requested if requested in i18n.LANGS else i18n.DEFAULT_LANG
+LANG = st.session_state["lang"]
+
+
+def t(key, **kwargs):
+    text = i18n.T[LANG].get(key, i18n.T["en"].get(key, key))
+    return text.format(**kwargs) if kwargs else text
+
+
+MONTH_NAMES = i18n.MONTHS[LANG]
+
+
+def fmt_num(value, spec=",.2f"):
+    """Locale-aware number formatting (pt: 1.234,56 · en: 1,234.56)."""
+    try:
+        text = format(value, spec)
+    except (TypeError, ValueError):
+        return str(value)
+    if LANG == "pt":
+        text = text.replace(",", "\0").replace(".", ",").replace("\0", ".")
+    return text
+
+
+def vname(column):
+    names = i18n.VARIABLES.get(column)
+    if names:
+        return names[0] if LANG == "pt" else names[1]
+    return column.replace("_", " ").capitalize()
+
+
+def unit_text(unit):
+    return i18n.UNIT_LABELS[LANG].get(unit, unit)
+
+
+def level_text(key, levels):
+    return i18n.LEVEL_LABELS[LANG].get(key, levels.get(key, {}).get("label", key))
+
+
+def period_text(period):
+    return i18n.PERIOD_LABELS[LANG].get(period, period)
+
+
+st.set_page_config(page_title=t("page_title"), page_icon="🌎", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
 <style>
-:root {--mb-ink: #163548; --mb-accent: #62A5BB;}
-.block-container {padding-top: 1.15rem; padding-bottom: 2.1rem; max-width: 1700px;}
-[data-testid="stSidebar"] {min-width: 370px !important; width: 370px !important;
-  background: #F2F7F8;}
-[data-testid="stSidebar"] > div:first-child {width: 370px !important;}
-[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {gap: .7rem;}
-[data-testid="stSidebar"] .stMultiSelect [data-baseweb="select"] {min-height: 45px;}
-[data-testid="stSidebar"] .stButton button {font-size: .86rem;}
-h1,h2,h3 {letter-spacing: -.025em; color: #163548;}
-[data-testid="stMetricValue"] {font-size: 1.4rem;}
-@media(max-width: 750px) {
-  [data-testid="stSidebar"], [data-testid="stSidebar"] > div:first-child {
-    min-width: min(370px, 95vw) !important; width: min(370px, 95vw) !important; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+:root {
+  --mb-ink: #163548; --mb-ink-2: #3E5A6C; --mb-muted: #6B8290;
+  --mb-blue: #2477A5; --mb-teal: #27917A; --mb-sky: #75C7E0; --mb-green: #77B893;
+  --mb-line: #E1EAEE; --mb-soft: #F4F8FA; --mb-radius: 14px;
+  --mb-shadow: 0 1px 2px rgba(22,53,72,.05), 0 6px 18px rgba(22,53,72,.06);
 }
+html, body, [class*="css"], .stApp, .stMarkdown, button, input, textarea, select {
+  font-family: 'Inter', 'Segoe UI', Roboto, Arial, sans-serif !important; }
+.stApp { background: #FAFCFD; }
+.block-container { padding-top: 1.2rem; padding-bottom: 2.4rem; max-width: 1640px; }
+h1, h2, h3, h4 { letter-spacing: -.02em; color: var(--mb-ink); font-weight: 700; }
+
+/* ---------- Header ---------- */
+.st-key-mb_hero {
+  background: radial-gradient(1200px 300px at 100% 0%, rgba(117,199,224,.35), transparent 60%),
+              linear-gradient(120deg, #123347 0%, #1D5F84 55%, #23806F 100%);
+  border-radius: 20px; padding: 1.35rem 1.6rem 1.25rem 1.6rem; box-shadow: var(--mb-shadow);
+  margin-bottom: .35rem; }
+.st-key-mb_hero .mb-eyebrow, .st-key-mb_hero .mb-title, .st-key-mb_hero .mb-subtitle { margin: 0; }
+.mb-eyebrow { color: #BFE6F1; font-size: .78rem; font-weight: 700; letter-spacing: .14em;
+  text-transform: uppercase; margin: 0 0 .25rem 0; display: flex; align-items: center; gap: .5rem; }
+.mb-eyebrow .dot { width: 9px; height: 9px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--mb-sky), var(--mb-green)); display: inline-block; }
+.st-key-mb_hero .mb-title { color: #FFFFFF; font-size: 2.1rem; font-weight: 800; line-height: 1.12; margin: 0; letter-spacing: -.03em; }
+.st-key-mb_hero .mb-subtitle { color: #D6E9F0; font-size: 1rem; margin-top: .45rem; font-weight: 400; }
+.mb-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .9rem; }
+.mb-chip { background: rgba(255,255,255,.13); border: 1px solid rgba(255,255,255,.22); color: #FFFFFF;
+  padding: .22rem .7rem; border-radius: 999px; font-size: .8rem; font-weight: 500; white-space: nowrap; }
+.mb-chip b { font-weight: 700; }
+.st-key-mb_lang [data-testid="stWidgetLabel"] p { color: #BFE6F1 !important; font-size: .72rem;
+  font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.st-key-mb_lang button { background: rgba(255,255,255,.12) !important; color: #FFFFFF !important;
+  border-color: rgba(255,255,255,.3) !important; font-weight: 600; min-width: 3.1rem; }
+.st-key-mb_lang button[aria-checked="true"], .st-key-mb_lang button[kind*="Active"] {
+  background: #FFFFFF !important; color: var(--mb-ink) !important; }
+
+/* ---------- KPI cards ---------- */
+.mb-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; margin: .9rem 0 .4rem 0; }
+.mb-kpi { background: #FFFFFF; border: 1px solid var(--mb-line); border-radius: var(--mb-radius);
+  padding: .85rem 1rem; box-shadow: var(--mb-shadow); display: flex; gap: .8rem; align-items: center; }
+.mb-kpi .ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+  font-size: 1.15rem; flex: none; }
+.mb-kpi .lb { color: var(--mb-muted); font-size: .76rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.mb-kpi .vl { color: var(--mb-ink); font-size: 1.38rem; font-weight: 750; line-height: 1.2; letter-spacing: -.02em; }
+@media (max-width: 900px) { .mb-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .st-key-mb_hero .mb-title { font-size: 1.55rem; } }
+
+/* ---------- Section headers ---------- */
+.mb-section { margin: .6rem 0 .5rem 0; }
+.mb-section h3 { margin: 0; font-size: 1.22rem; }
+.mb-section p { margin: .2rem 0 0 0; color: var(--mb-muted); font-size: .9rem; }
+.mb-label { font-weight: 700; color: var(--mb-ink); font-size: .95rem; margin: .2rem 0 .3rem 0; }
+
+/* ---------- Tabs ---------- */
+.stTabs [data-baseweb="tab-list"] { gap: .35rem; border-bottom: 1px solid var(--mb-line); }
+.stTabs [data-baseweb="tab"] { height: 2.7rem; padding: 0 1rem; border-radius: 10px 10px 0 0;
+  font-weight: 600; color: var(--mb-ink-2); }
+.stTabs [data-baseweb="tab"]:hover { background: var(--mb-soft); color: var(--mb-blue); }
+.stTabs [aria-selected="true"] { color: var(--mb-blue) !important; background: #EEF6FA; }
+.stTabs [data-baseweb="tab-highlight"] { background-color: var(--mb-blue); height: 3px; border-radius: 3px; }
+
+/* ---------- Buttons ---------- */
+.stButton > button, .stDownloadButton > button {
+  border-radius: 999px; font-weight: 600; font-size: .86rem; padding: .38rem .95rem;
+  border: 1px solid #CFDDE4; color: var(--mb-ink); background: #FFFFFF;
+  transition: all .15s ease; box-shadow: 0 1px 2px rgba(22,53,72,.06); }
+.stButton > button:hover, .stDownloadButton > button:hover {
+  border-color: var(--mb-blue); color: var(--mb-blue); background: #F1F8FB; transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(36,119,165,.15); }
+.stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {
+  background: linear-gradient(120deg, #1D6A93, #23806F); color: #FFFFFF; border: none; }
+.stButton > button[kind="primary"]:hover, .stDownloadButton > button[kind="primary"]:hover { color: #FFFFFF; filter: brightness(1.06); }
+.stButton > button[kind="tertiary"] { box-shadow: none; border: none; background: transparent; color: var(--mb-muted); }
+
+/* ---------- Cards / containers ---------- */
+[data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVerticalBlock"]) { border-radius: var(--mb-radius); }
+div[data-testid="stMetric"] { background: #FFFFFF; border: 1px solid var(--mb-line); border-radius: 12px;
+  padding: .6rem .85rem; box-shadow: 0 1px 2px rgba(22,53,72,.04); }
+[data-testid="stMetricLabel"] p { color: var(--mb-muted); font-size: .78rem; font-weight: 600; }
+[data-testid="stMetricValue"] { font-size: 1.3rem; color: var(--mb-ink); font-weight: 700; }
+[data-testid="stExpander"] details { border-radius: 12px; border-color: var(--mb-line); background: #FFFFFF; }
+[data-testid="stExpander"] summary p { font-weight: 600; color: var(--mb-ink); }
+[data-testid="stPlotlyChart"] { background: #FFFFFF; border: 1px solid var(--mb-line); border-radius: var(--mb-radius);
+  padding: .35rem; box-shadow: 0 1px 2px rgba(22,53,72,.04); }
+[data-testid="stAlert"] { border-radius: 12px; }
+[data-testid="stCaptionContainer"] { color: var(--mb-muted); }
+
+/* ---------- Sidebar ---------- */
+[data-testid="stSidebar"] { min-width: 360px !important; width: 360px !important; }
+[data-testid="stSidebar"] > div:first-child { width: 360px !important; }
+@media (max-width: 750px) { [data-testid="stSidebar"], [data-testid="stSidebar"] > div:first-child {
+  min-width: min(360px, 95vw) !important; width: min(360px, 95vw) !important; } }
+[data-testid="stSidebar"] { background: linear-gradient(180deg, #F4F8FA 0%, #EEF4F6 100%); border-right: 1px solid var(--mb-line); }
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: .6rem; }
+[data-testid="stSidebar"] .stMultiSelect [data-baseweb="select"] > div { max-height: 168px; overflow-y: auto; }
+[data-testid="stSidebar"] .stButton > button { font-size: .8rem; padding: .28rem .6rem; min-height: 2.1rem; gap: .25rem; }
+.st-key-mb_quick { gap: .35rem !important; }
+[data-testid="stSidebarHeader"] { height: 2.2rem; min-height: 2.2rem; padding-bottom: 0; }
+.mb-side-brand { display: flex; align-items: center; gap: .6rem; margin: -.4rem 0 .2rem 0; }
+.mb-side-brand .logo { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+  background: linear-gradient(135deg, #1D6A93, #23806F); color: #FFF; font-weight: 800; font-size: .95rem; }
+.mb-side-brand .nm { font-weight: 800; color: var(--mb-ink); line-height: 1.1; font-size: 1rem; }
+.mb-side-brand .sb { color: var(--mb-muted); font-size: .76rem; }
+.mb-step { display: flex; align-items: center; gap: .5rem; margin: .9rem 0 .15rem 0; color: var(--mb-ink);
+  font-weight: 700; font-size: .82rem; letter-spacing: .08em; text-transform: uppercase; }
+.mb-step .n { width: 22px; height: 22px; border-radius: 50%; background: var(--mb-blue); color: #FFF;
+  display: grid; place-items: center; font-size: .72rem; letter-spacing: 0; }
+.mb-count { background: #FFFFFF; border: 1px dashed #C7D8E0; border-radius: 10px; padding: .45rem .7rem;
+  font-size: .8rem; color: var(--mb-ink-2); }
+
+.mb-footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--mb-line);
+  color: var(--mb-muted); font-size: .8rem; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
-
 
 @st.cache_data(show_spinner=False)
 def catalog():
@@ -84,7 +234,7 @@ def get_geojson(level):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
-@st.cache_data(show_spinner="Reading selected data...", max_entries=16)
+@st.cache_data(show_spinner=False, max_entries=16)
 def load_metrics(level, period, years, columns, ids):
     directory = BASE / "metrics" / level / period.lower()
     paths = [directory / f"year={year}" / "data.parquet" for year in years]
@@ -100,7 +250,7 @@ def load_metrics(level, period, years, columns, ids):
 
 def metric_label(m, metadata):
     unit = metadata.get(m, {}).get("unit", "")
-    return f"{m.replace('_', ' ')} [{unit}]" if unit else m.replace("_", " ")
+    return f"{vname(m)} [{unit_text(unit)}]" if unit else vname(m)
 
 
 def clean_value(df, column):
@@ -234,12 +384,12 @@ def map_figure(layer, metric, features, center, zoom, scale, vmin, vmax, label, 
         hover_data={"territory_id": True, metric: ":.3f"},
         color_continuous_scale=scale, range_color=(vmin, vmax),
         map_style="carto-positron", center=center, zoom=zoom, opacity=.83,
-        labels={metric: label},
+        labels={metric: label, "territory_id": "ID"},
     )
     fig.update_traces(marker_line_width=.45, marker_line_color="rgba(34,60,75,.58)")
     fig.update_layout(height=height, margin=dict(l=0, r=0, t=0, b=0),
         coloraxis_colorbar=dict(title=dict(text="", side="right"), thickness=13, len=.73, x=1.01),
-        font=dict(family="Arial", color="#234153"))
+        font=dict(family=FONT_FAMILY, color="#234153"), separators=",." if LANG == "pt" else ".,")
     return fig
 
 
@@ -256,7 +406,7 @@ def observations_at(frame, year, month, period, metric):
 def format_p(p):
     """Format p-values without displaying very small probabilities as zero."""
     if p is None or not np.isfinite(p):
-        return "n/a"
+        return t("n_a")
     if p <= 0:
         return "<1e-300"
     return f"{p:.2e}" if p < .001 else f"{p:.4f}"
@@ -369,7 +519,8 @@ def prepare_long(filtered, chosen, period, metadata):
     data = filtered.melt(id_vars=id_cols, value_vars=chosen, var_name="variable", value_name="value")
     data["value"] = pd.to_numeric(data["value"], errors="coerce")
     data = data.replace([np.inf, -np.inf], np.nan).dropna(subset=["value"])
-    data["unit"] = data["variable"].map(lambda m: metadata.get(m, {}).get("unit", "") or "unverified")
+    data["unit"] = data["variable"].map(lambda m: unit_text(metadata.get(m, {}).get("unit", "") or "unverified"))
+    data["variable_label"] = data["variable"].map(vname)
     if period == "Monthly":
         data["time"] = pd.to_datetime(dict(year=data.year.astype(int), month=data.month.astype(int), day=1))
     elif period == "Annual":
@@ -385,7 +536,8 @@ def zscore_column(long):
 
 def prettify(fig, height=470):
     fig.update_layout(height=height, paper_bgcolor="white", plot_bgcolor="white",
-        font=dict(family="Arial", size=12, color="#213D50"),
+        font=dict(family=FONT_FAMILY, size=12, color="#213D50"),
+        separators=",." if LANG == "pt" else ".,",
         margin=dict(l=16, r=10, t=56, b=16), hovermode="closest",
         legend=dict(orientation="h", y=-.18, x=0, title=""))
     fig.update_xaxes(showgrid=False, zeroline=False)
@@ -398,25 +550,78 @@ def safe_multiselect_state(key, allowed):
         st.session_state[key] = [v for v in st.session_state[key] if v in allowed]
 
 
-# ----------------------------- Sidebar -------------------------------------
-st.title("🌎 MapBiomas Atmosphere Explorer")
-st.caption("Brazil · Atmospheric indicators, land cover and fire/water themes · XLSX-derived data · up to 2025")
+
+def style_fig(fig):
+    """Shared typography and locale separators for figures not using prettify()."""
+    fig.update_layout(font=dict(family=FONT_FAMILY, color="#234153"),
+                      separators=",." if LANG == "pt" else ".,", paper_bgcolor="white")
+    return fig
+
+
+def section(title, lead=None):
+    st.markdown(f'<div class="mb-section"><h3>{title}</h3>' + (f"<p>{lead}</p>" if lead else "") + "</div>",
+                unsafe_allow_html=True)
+
+
+def sidebar_step(n, text):
+    st.markdown(f'<div class="mb-step"><span class="n">{n}</span>{text}</div>', unsafe_allow_html=True)
+
+
+def change_language():
+    choice = st.session_state.get("mb_lang_choice")
+    if choice in i18n.LANGS:
+        st.session_state["lang"] = choice
+        st.query_params["lang"] = choice
+
+
+def reset_filters():
+    for key in list(st.session_state.keys()):
+        if key not in ("lang", "mb_lang_choice"):
+            del st.session_state[key]
+
+
+# ------------------------------- Header ------------------------------------
+hero = st.container(key="mb_hero")
+with hero:
+    hero_text, hero_lang = st.columns([5, 1], vertical_alignment="top")
+    hero_slot = hero_text.empty()
+    with hero_lang:
+        with st.container(key="mb_lang", horizontal_alignment="right"):
+            st.segmented_control(t("language"), list(i18n.LANGS), default=LANG, required=True,
+                                 format_func=lambda k: i18n.LANGS[k], key="mb_lang_choice",
+                                 on_change=change_language)
+
+
+def render_hero(chips=()):
+    chip_html = "".join(f'<span class="mb-chip">{c}</span>' for c in chips)
+    hero_slot.markdown(
+        f'<div class="mb-eyebrow"><span class="dot"></span>{t("brand")}</div>'
+        f'<div class="mb-title">{t("app_title")}</div>'
+        f'<div class="mb-subtitle">{t("app_subtitle")}</div>'
+        + (f'<div class="mb-chips">{chip_html}</div>' if chips else ""),
+        unsafe_allow_html=True)
+
+
+render_hero()
 if not (BASE / "catalog.json").exists():
-    st.error("Dataset not bundled. Keep the original data/ folder when replacing app.py.")
+    st.error(t("no_data_bundle"), icon=":material/error:")
     st.stop()
 manifest = catalog()
 levels = manifest.get("levels", {})
 if not levels:
-    st.error("The catalog does not contain territorial levels."); st.stop()
+    st.error(t("no_levels"), icon=":material/error:"); st.stop()
 
+# ----------------------------- Sidebar -------------------------------------
 with st.sidebar:
-    st.header("Explore the data")
-    level = st.selectbox("Territorial level", list(levels), format_func=lambda k: levels[k]["label"])
+    st.markdown(f'<div class="mb-side-brand"><div class="logo">MB</div><div><div class="nm">{t("brand")}</div>'
+                f'<div class="sb">{t("app_title")}</div></div></div>', unsafe_allow_html=True)
+
+    # 1 · Where
+    sidebar_step(1, t("sb_where"))
+    level = st.selectbox(t("level"), list(levels), format_func=lambda k: level_text(k, levels), key="mb_level")
     available = [p for p in PERIODS if levels[level]["periods"].get(p, {}).get("rows", 0) > 0]
     if not available:
-        st.error("No data for this level."); st.stop()
-    period = st.radio("Temporal resolution", available, horizontal=True)
-    info = levels[level]["periods"][period]
+        st.error(t("no_level_data")); st.stop()
     areas = get_territories(level).copy()
     areas["territory_id"] = areas["territory_id"].astype(str)
     areas["territory_name"] = areas["territory_name"].astype(str)
@@ -429,31 +634,54 @@ with st.sidebar:
     if selection_key not in st.session_state:
         st.session_state[selection_key] = options if len(options) <= 30 else options[:10]
     safe_multiselect_state(selection_key, options)
+
     def change_territories(items):
         st.session_state[selection_key] = list(items)
+    pick = st.multiselect(t("units"), options, key=selection_key, placeholder=t("units_placeholder"),
+        format_func=lambda i: label_of.get(i, i), help=t("units_help"))
     s1, s2 = st.columns(2)
-    s1.button("Select all units", on_click=change_territories, args=(options,), use_container_width=True, key=f"all_units_{level}")
-    s2.button("Clear units", on_click=change_territories, args=([],), use_container_width=True, key=f"clear_units_{level}")
-    pick = st.multiselect("Territorial units", options, key=selection_key,
-        format_func=lambda i: label_of.get(i, i), help="Territory IDs correspond to the genuine GEE geometries.")
+    s1.button(t("select_all"), on_click=change_territories, args=(options,), width="stretch",
+              icon=":material/done_all:", key=f"all_units_{level}")
+    s2.button(t("clear"), on_click=change_territories, args=([],), width="stretch",
+              icon=":material/backspace:", key=f"clear_units_{level}")
 
+    # 2 · When
+    sidebar_step(2, t("sb_when"))
+    period_key = f"mb_period_{level}"
+    if st.session_state.get(period_key) not in available:
+        st.session_state[period_key] = available[0]
+    period = st.segmented_control(t("period"), available, required=True, format_func=period_text,
+                                  key=period_key, width="stretch")
+    info = levels[level]["periods"][period]
     years_available = sorted(int(s) for s in info["years"] if s != "all")
+    year_range = None
     if period != "Multiyear":
         if len(years_available) < 2:
-            st.info("This period has only one year of data.")
+            st.info(t("one_year"))
             year_range = (years_available[0], years_available[0])
         else:
-            year_range = st.slider("Year interval", min(years_available), max(years_available),
+            year_range = st.slider(t("year_range"), min(years_available), max(years_available),
                 (min(years_available), max(years_available)), key=f"range_{level}_{period}")
         years = [y for y in years_available if year_range[0] <= y <= year_range[1]]
         if period == "Monthly":
-            months = st.multiselect("Months to include", list(range(1, 13)), default=list(range(1, 13)),
-                format_func=lambda m: MONTH_NAMES[m - 1], key=f"months_{level}")
+            month_key = f"months_{level}"
+            if month_key not in st.session_state:
+                st.session_state[month_key] = list(range(1, 13))
+            months = st.pills(t("months"), list(range(1, 13)), selection_mode="multi",
+                format_func=lambda m: MONTH_NAMES[m - 1], key=month_key)
+            months = sorted(months or [])
+
+            def all_months():
+                st.session_state[month_key] = list(range(1, 13))
+            st.button(t("all_months"), on_click=all_months, type="tertiary", icon=":material/calendar_month:",
+                      key=f"all_months_{level}")
         else:
             months = []
     else:
         years, months = ["all"], []
 
+    # 3 · What
+    sidebar_step(3, t("sb_what"))
     dictionary = get_dictionary(level)
     meta = {r.get("column_name"): r for r in dictionary if r.get("period") == period}
     metrics = list(info.get("columns", []))
@@ -461,436 +689,474 @@ with st.sidebar:
     if variable_key not in st.session_state:
         st.session_state[variable_key] = list(metrics)  # ALL selected by default.
     safe_multiselect_state(variable_key, metrics)
+
     def change_metrics(items):
         st.session_state[variable_key] = list(items)
-    a, b, c = st.columns(3)
-    a.button("Climate", key=f"clim_{level}_{period}", on_click=change_metrics,
-        args=([m for m in metrics if meta.get(m, {}).get("group") == "Atmosphere C2"],), use_container_width=True)
-    b.button("Land/themes", key=f"land_{level}_{period}", on_click=change_metrics,
-        args=([m for m in metrics if meta.get(m, {}).get("group") != "Atmosphere C2"],), use_container_width=True)
-    c.button("All variables", key=f"every_{level}_{period}", on_click=change_metrics, args=(metrics,), use_container_width=True)
-    selected = st.multiselect("Variables (all preselected)", metrics, key=variable_key,
-        format_func=lambda m: metric_label(m, meta), help="All variables are selected by default; choose a smaller chart subset in the main panel for legibility.")
-    st.caption(f"{len(options):,} territorial units · {len(metrics)} variables available · {len(selected)} selected")
-    with st.expander("About colors and sources", expanded=False):
-        st.caption("Brand colors follow the MapBiomas identity manual. Land-cover categories and continuous atmospheric measurements use different legend conventions. Numerical map scales are consistent across compared years.")
-        if st.checkbox("Show selected metric dictionary", key=f"source_{level}_{period}"):
-            st.dataframe(pd.DataFrame([meta.get(m, {}) for m in selected]), hide_index=True, use_container_width=True)
+    climate_vars = [m for m in metrics if meta.get(m, {}).get("group") == "Atmosphere C2"]
+    land_vars = [m for m in metrics if meta.get(m, {}).get("group") != "Atmosphere C2"]
+    quick = st.container(horizontal=True, gap="small", key="mb_quick")
+    quick.button(t("quick_climate"), key=f"clim_{level}_{period}", on_click=change_metrics, args=(climate_vars,), help=t("quick_help"))
+    quick.button(t("quick_land"), key=f"land_{level}_{period}", on_click=change_metrics, args=(land_vars,), help=t("quick_help"), disabled=not land_vars)
+    quick.button(t("quick_all"), key=f"every_{level}_{period}", on_click=change_metrics, args=(metrics,), help=t("quick_help"))
+    selected = st.multiselect(t("variables"), metrics, key=variable_key, placeholder=t("variables_placeholder"),
+        format_func=lambda m: metric_label(m, meta), help=t("variables_help"))
+    st.markdown('<div class="mb-count">' + t("sb_count", units=fmt_num(len(options), ",d"), avail=len(metrics),
+                sel=len(selected)) + "</div>", unsafe_allow_html=True)
+
+    st.button(t("reset"), on_click=reset_filters, icon=":material/restart_alt:", type="tertiary", key="mb_reset")
+    with st.expander(t("about_colors"), expanded=False, icon=":material/palette:"):
+        st.caption(t("about_colors_text"))
+        if st.checkbox(t("show_dict"), key=f"source_{level}_{period}"):
+            st.dataframe(pd.DataFrame([meta.get(m, {}) for m in selected]), hide_index=True, width="stretch")
+
+dates_text = t("kpi_multiyear") if period == "Multiyear" else f"{year_range[0]}–{year_range[1]}"
+render_hero([f"<b>{level_text(level, levels)}</b>", period_text(period), dates_text,
+             f"{t('kpi_units')}: {len(pick)}", f"{t('kpi_vars')}: {len(selected)}/{len(metrics)}"])
 
 if not pick or not selected:
-    st.info("Select at least one territory and one variable in the left sidebar."); st.stop()
+    st.info(t("need_selection"), icon=":material/tune:"); st.stop()
 if period == "Monthly" and not months:
-    st.info("Select at least one month in the sidebar."); st.stop()
+    st.info(t("need_month"), icon=":material/calendar_month:"); st.stop()
 
-frames = load_metrics(level, period, tuple(years), tuple(selected), tuple(pick))
+with st.spinner(t("reading")):
+    frames = load_metrics(level, period, tuple(years), tuple(selected), tuple(pick))
 if frames.empty:
-    st.warning("No observations match this selection."); st.stop()
+    st.warning(t("no_obs")); st.stop()
 frames["territory_id"] = frames["territory_id"].astype(str)
 filtered = frames[frames.territory_id.isin(set(pick))].copy()
 if period == "Monthly":
     filtered = filtered[filtered.month.isin(months)].copy()
 if filtered.empty:
-    st.warning("No observations remain after filtering."); st.stop()
+    st.warning(t("no_obs_filtered")); st.stop()
 filtered["territory_label"] = filtered["territory_id"].map(label_of).fillna(filtered["territory_name"])
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Territorial units", f"{filtered.territory_id.nunique():,}")
-c2.metric("Observations", f"{len(filtered):,}")
-c3.metric("Selected variables", f"{len(selected)} / {len(metrics)}")
-c4.metric("Date coverage", "Multiyear" if period == "Multiyear" else f"{year_range[0]}–{year_range[1]}")
+kpis = [
+    ("🗺️", "#E6F2F8", t("kpi_units"), fmt_num(filtered.territory_id.nunique(), ",d")),
+    ("📊", "#E7F4EE", t("kpi_obs"), fmt_num(len(filtered), ",d")),
+    ("🧪", "#F3EEF8", t("kpi_vars"), f"{len(selected)} / {len(metrics)}"),
+    ("🗓️", "#FDF1E4", t("kpi_dates"), dates_text),
+]
+st.markdown('<div class="mb-kpis">' + "".join(
+    f'<div class="mb-kpi"><div class="ic" style="background:{bg}">{ic}</div><div><div class="lb">{lb}</div>'
+    f'<div class="vl">{vl}</div></div></div>' for ic, bg, lb, vl in kpis) + "</div>", unsafe_allow_html=True)
+
+time_cols = ["year", "month"] if period == "Monthly" else ["year"] if period == "Annual" else ["period"]
+axis_names = {"year": t("year"), "month": t("month"), "period": t("period"),
+              "territory_label": t("territory"), "territory_id": "ID"}
+
+tab_maps, tab_series, tab_reg, tab_corr, tab_data = st.tabs([
+    f":material/map: {t('tab_maps')}", f":material/show_chart: {t('tab_series')}",
+    f":material/scatter_plot: {t('tab_regression')}", f":material/grid_on: {t('tab_corr')}",
+    f":material/table_view: {t('tab_data')}"])
 
 # ---------------------------- Two-period maps ------------------------------
-st.divider()
-st.subheader("Territorial comparison · two dates")
-map_controls = st.columns([2.4, 1.0, 1.0, 1.2])
-with map_controls[0]:
-    map_var = st.selectbox("Map variable", selected, format_func=lambda m: metric_label(m, meta), key=f"map_metric_{level}_{period}")
-if period != "Multiyear":
-    with map_controls[1]:
-        year_a = st.selectbox("Year A", years, index=0, key=f"year_a_{level}_{period}")
-    with map_controls[2]:
-        year_b = st.selectbox("Year B", years, index=len(years) - 1, key=f"year_b_{level}_{period}")
-    with map_controls[3]:
-        if period == "Monthly":
-            map_month = st.selectbox("Month (both maps)", months, index=len(months) - 1,
-                format_func=lambda m: MONTH_NAMES[m - 1], key=f"map_month_{level}")
-        else:
-            st.caption("Same variable · shared color scale")
-            map_month = None
-else:
-    year_a = year_b = None
-    map_month = None
-    with map_controls[1]:
-        st.caption("Multiyear values have no individual year.")
-
-layer_a = observations_at(filtered, year_a, map_month, period, map_var)
-layer_b = observations_at(filtered, year_b, map_month, period, map_var)
-geo = get_geojson(level)
-if geo is None:
-    st.warning("This territorial level has no GEE GeoJSON export. Other charts remain available.")
-else:
-    ids_in_view = set(layer_a.territory_id) | set(layer_b.territory_id)
-    selected_features = []
-    skipped = 0
-    for feature in geo.get("features", []):
-        fid = str(feature.get("properties", {}).get("territory_id", ""))
-        if fid not in ids_in_view:
-            continue
-        geometry = polygonal_geometry(feature.get("geometry"))
-        if geometry is None:
-            skipped += 1
-            continue
-        props = dict(feature.get("properties", {}))
-        props["territory_id"] = fid
-        selected_features.append({"type": "Feature", "properties": props, "geometry": geometry})
-    if skipped:
-        st.warning(f"{skipped} features have no polygonal coordinates and were omitted from the map.")
-    if len(selected_features) > 450:
-        st.info("The map displays up to 450 territories for browser performance. Tables and graphs retain all selected data.")
-        selected_features = selected_features[:450]
-    if not selected_features:
-        st.warning("No matching polygon geometries. Check the XLSX territory IDs and GEE GeoJSON IDs.")
+with tab_maps:
+    section(t("maps_title"), t("maps_lead"))
+    map_controls = st.columns([2.4, 1.0, 1.0, 1.2], vertical_alignment="bottom")
+    with map_controls[0]:
+        map_var = st.selectbox(t("map_var"), selected, format_func=lambda m: metric_label(m, meta), key=f"map_metric_{level}_{period}")
+    if period != "Multiyear":
+        with map_controls[1]:
+            year_a = st.selectbox(t("year_a"), years, index=0, key=f"year_a_{level}_{period}")
+        with map_controls[2]:
+            year_b = st.selectbox(t("year_b"), years, index=len(years) - 1, key=f"year_b_{level}_{period}")
+        with map_controls[3]:
+            if period == "Monthly":
+                map_month = st.selectbox(t("map_month"), months, index=len(months) - 1,
+                    format_func=lambda m: MONTH_NAMES[m - 1], key=f"map_month_{level}")
+            else:
+                st.caption(t("same_scale"))
+                map_month = None
     else:
-        displayed_ids = {f["properties"]["territory_id"] for f in selected_features}
-        layer_a = layer_a[layer_a.territory_id.isin(displayed_ids)].copy()
-        layer_b = layer_b[layer_b.territory_id.isin(displayed_ids)].copy()
-        center, zoom = geo_bounds(selected_features)
-        v1 = clean_value(layer_a, map_var).dropna().to_numpy(dtype=float)
-        v2 = clean_value(layer_b, map_var).dropna().to_numpy(dtype=float)
-        family = palette_family(map_var, meta)
-        vmin, vmax = limits(v1, v2, symmetric=family == "diverging")
-        palette = map_scale(map_var, meta)
-        unit_label = metric_label(map_var, meta)
-        if period == "Multiyear":
-            fig = map_figure(layer_a, map_var, selected_features, center, zoom, palette, vmin, vmax, unit_label, height=520)
-            st.plotly_chart(fig, use_container_width=True, key="single_multiyear_map")
+        year_a = year_b = None
+        map_month = None
+        with map_controls[1]:
+            st.caption(t("multiyear_note"))
+
+    layer_a = observations_at(filtered, year_a, map_month, period, map_var)
+    layer_b = observations_at(filtered, year_b, map_month, period, map_var)
+    geo = get_geojson(level)
+    if geo is None:
+        st.warning(t("no_geojson"))
+    else:
+        ids_in_view = set(layer_a.territory_id) | set(layer_b.territory_id)
+        selected_features = []
+        skipped = 0
+        for feature in geo.get("features", []):
+            fid = str(feature.get("properties", {}).get("territory_id", ""))
+            if fid not in ids_in_view:
+                continue
+            geometry = polygonal_geometry(feature.get("geometry"))
+            if geometry is None:
+                skipped += 1
+                continue
+            props = dict(feature.get("properties", {}))
+            props["territory_id"] = fid
+            selected_features.append({"type": "Feature", "properties": props, "geometry": geometry})
+        if skipped:
+            st.warning(t("skipped_features", n=skipped))
+        if len(selected_features) > 450:
+            st.info(t("map_limit"))
+            selected_features = selected_features[:450]
+        if not selected_features:
+            st.warning(t("no_geometries"))
         else:
-            tab1, tab2 = st.tabs(["Side-by-side maps", "Change map and rankings"])
-            with tab1:
-                left_map, right_map = st.columns(2, gap="small")
-                with left_map:
-                    st.markdown(f"**{year_a}**" + (f" · {MONTH_NAMES[map_month - 1]}" if map_month else ""))
-                    fig = map_figure(layer_a, map_var, selected_features, center, zoom, palette, vmin, vmax, unit_label)
-                    st.plotly_chart(fig, use_container_width=True, key="map_a")
-                with right_map:
-                    st.markdown(f"**{year_b}**" + (f" · {MONTH_NAMES[map_month - 1]}" if map_month else ""))
-                    fig = map_figure(layer_b, map_var, selected_features, center, zoom, palette, vmin, vmax, unit_label)
-                    st.plotly_chart(fig, use_container_width=True, key="map_b")
-                st.caption("Both years use exactly the same numerical color limits. Map shading represents territorial summary statistics, not 30 m land-cover pixels.")
-            with tab2:
-                paired = layer_a[["territory_id", "territory_label", map_var]].merge(
-                    layer_b[["territory_id", map_var]], on="territory_id", suffixes=("_a", "_b"))
-                paired["change"] = clean_value(paired, f"{map_var}_b") - clean_value(paired, f"{map_var}_a")
-                paired["change_pct"] = (100 * paired["change"] / clean_value(paired, f"{map_var}_a").abs().replace(0, np.nan))
-                delta_map = paired[["territory_id", "territory_label", "change"]].rename(columns={"change": "Δ B − A"})
-                diff_bounds = limits(delta_map["Δ B − A"].dropna().to_numpy(), symmetric=True)
-                dm, rk = st.columns([1.65, 1], gap="medium")
-                with dm:
-                    st.markdown(f"**Absolute change · {year_b} − {year_a}**")
-                    fig = map_figure(delta_map, "Δ B − A", selected_features, center, zoom, DIVERGING, *diff_bounds, f"Change [{meta.get(map_var, {}).get('unit', '')}]")
-                    st.plotly_chart(fig, use_container_width=True, key="map_delta")
-                with rk:
-                    st.markdown("**Territorial changes**")
-                    st.caption("Positive changes are warm; negative changes are blue. Direction does not imply benefit or harm.")
-                    display = paired[["territory_label", f"{map_var}_a", f"{map_var}_b", "change", "change_pct"]].copy()
-                    display.columns = ["Territory", str(year_a), str(year_b), "Δ absolute", "Δ %"]
-                    st.dataframe(display.sort_values("Δ absolute", ascending=False), use_container_width=True,
-                        hide_index=True, height=335,
-                        column_config={"Δ absolute": st.column_config.NumberColumn(format="%.3f"),
-                                       "Δ %": st.column_config.NumberColumn(format="%.1f%%")})
-                if not paired.empty:
-                    q1, q2, q3 = st.columns(3)
-                    q1.metric("Paired territories", str(paired.change.notna().sum()))
-                    q2.metric("Mean absolute Δ", f"{paired.change.mean():,.2f}" if paired.change.notna().any() else "n/a")
-                    q3.metric("Median absolute Δ", f"{paired.change.median():,.2f}" if paired.change.notna().any() else "n/a")
-                st.caption("Percentage change = (B − A)/|A| × 100; undefined where A = 0. Summary means are unweighted across selected territories.")
+            displayed_ids = {f["properties"]["territory_id"] for f in selected_features}
+            layer_a = layer_a[layer_a.territory_id.isin(displayed_ids)].copy()
+            layer_b = layer_b[layer_b.territory_id.isin(displayed_ids)].copy()
+            center, zoom = geo_bounds(selected_features)
+            v1 = clean_value(layer_a, map_var).dropna().to_numpy(dtype=float)
+            v2 = clean_value(layer_b, map_var).dropna().to_numpy(dtype=float)
+            family = palette_family(map_var, meta)
+            vmin, vmax = limits(v1, v2, symmetric=family == "diverging")
+            palette = map_scale(map_var, meta)
+            unit_label = metric_label(map_var, meta)
+            month_suffix = f" · {MONTH_NAMES[map_month - 1]}" if map_month else ""
+            if period == "Multiyear":
+                fig = map_figure(layer_a, map_var, selected_features, center, zoom, palette, vmin, vmax, unit_label, height=520)
+                st.plotly_chart(fig, width="stretch", key="single_multiyear_map")
+            else:
+                view = st.segmented_control(t("viz"), ["side", "change"], required=True, default="side",
+                    format_func=lambda v: f":material/compare: {t('side_by_side')}" if v == "side"
+                    else f":material/trending_up: {t('change_tab')}",
+                    key="mb_map_view", label_visibility="collapsed")
+                if view == "side":
+                    left_map, right_map = st.columns(2, gap="small")
+                    with left_map:
+                        st.markdown(f'<div class="mb-label">{year_a}{month_suffix}</div>', unsafe_allow_html=True)
+                        fig = map_figure(layer_a, map_var, selected_features, center, zoom, palette, vmin, vmax, unit_label)
+                        st.plotly_chart(fig, width="stretch", key="map_a")
+                    with right_map:
+                        st.markdown(f'<div class="mb-label">{year_b}{month_suffix}</div>', unsafe_allow_html=True)
+                        fig = map_figure(layer_b, map_var, selected_features, center, zoom, palette, vmin, vmax, unit_label)
+                        st.plotly_chart(fig, width="stretch", key="map_b")
+                    st.caption(t("same_limits"))
+                else:
+                    paired = layer_a[["territory_id", "territory_label", map_var]].merge(
+                        layer_b[["territory_id", map_var]], on="territory_id", suffixes=("_a", "_b"))
+                    paired["change"] = clean_value(paired, f"{map_var}_b") - clean_value(paired, f"{map_var}_a")
+                    paired["change_pct"] = (100 * paired["change"] / clean_value(paired, f"{map_var}_a").abs().replace(0, np.nan))
+                    delta_map = paired[["territory_id", "territory_label", "change"]].rename(columns={"change": "Δ B − A"})
+                    diff_bounds = limits(delta_map["Δ B − A"].dropna().to_numpy(), symmetric=True)
+                    if not paired.empty:
+                        q1, q2, q3 = st.columns(3)
+                        q1.metric(t("paired_terr"), str(paired.change.notna().sum()))
+                        q2.metric(t("mean_delta"), fmt_num(paired.change.mean()) if paired.change.notna().any() else t("n_a"))
+                        q3.metric(t("median_delta"), fmt_num(paired.change.median()) if paired.change.notna().any() else t("n_a"))
+                    dm, rk = st.columns([1.65, 1], gap="medium")
+                    with dm:
+                        st.markdown(f'<div class="mb-label">{t("abs_change", a=year_a, b=year_b)}{month_suffix}</div>', unsafe_allow_html=True)
+                        fig = map_figure(delta_map, "Δ B − A", selected_features, center, zoom, DIVERGING, *diff_bounds,
+                                         t("change_unit", unit=unit_text(meta.get(map_var, {}).get("unit", ""))))
+                        st.plotly_chart(fig, width="stretch", key="map_delta")
+                    with rk:
+                        st.markdown(f'<div class="mb-label">{t("terr_changes")}</div>', unsafe_allow_html=True)
+                        st.caption(t("change_note"))
+                        display = paired[["territory_label", f"{map_var}_a", f"{map_var}_b", "change", "change_pct"]].copy()
+                        display.columns = [t("col_territory"), str(year_a), str(year_b), t("col_abs"), t("col_pct")]
+                        st.dataframe(display.sort_values(t("col_abs"), ascending=False), width="stretch",
+                            hide_index=True, height=360,
+                            column_config={t("col_abs"): st.column_config.NumberColumn(format="%.3f"),
+                                           t("col_pct"): st.column_config.NumberColumn(format="%.1f%%")})
+                    st.caption(t("pct_note"))
 
 # ------------------------- Time series explorer ---------------------------
-st.divider()
-st.subheader("Time series · multivariate exploration")
-chart_a, chart_b, chart_c = st.columns([1.65, 1, 1])
-with chart_a:
-    chart_key = f"focus_{level}_{period}"
-    if chart_key not in st.session_state:
-        st.session_state[chart_key] = list(selected[:min(6, len(selected))])
-    safe_multiselect_state(chart_key, selected)
-    focus = st.multiselect("Variables in main chart", selected, key=chart_key,
-        format_func=lambda m: metric_label(m, meta), help="The sidebar selects all available metrics for analysis. Here select those to draw together without overplotting.")
-with chart_b:
-    if period != "Multiyear":
-        chart_modes = ["Diverging z-score heatmap", "Z-score trajectories", "Raw values by unit", "Index (first = 100)", "Percent change from first"]
-        chart_mode = st.selectbox("Visualization", chart_modes, key=f"chart_mode_{level}_{period}")
+with tab_series:
+    section(t("series_title"), t("series_lead"))
+    chart_a, chart_b, chart_c = st.columns([1.65, 1, 1])
+    with chart_a:
+        chart_key = f"focus_{level}_{period}"
+        if chart_key not in st.session_state:
+            st.session_state[chart_key] = list(selected[:min(6, len(selected))])
+        safe_multiselect_state(chart_key, selected)
+        focus = st.multiselect(t("focus_vars"), selected, key=chart_key,
+            format_func=lambda m: metric_label(m, meta), help=t("focus_vars_help"))
+    with chart_b:
+        if period != "Multiyear":
+            chart_mode = st.selectbox(t("viz"), i18n.CHART_MODES, format_func=lambda k: t(f"mode_{k}"),
+                                      key=f"chart_mode_{level}_{period}_v4")
+        else:
+            chart_mode = "multiyear"
+            st.caption(t("multiyear_cmp"))
+    with chart_c:
+        if period != "Multiyear":
+            area_key = f"focus_area_{level}_{period}"
+            if area_key not in st.session_state:
+                st.session_state[area_key] = pick[:min(4, len(pick))]
+            safe_multiselect_state(area_key, pick)
+            chart_territories = st.multiselect(t("focus_terr"), pick, format_func=lambda i: label_of.get(i, i),
+                key=area_key)
+        else:
+            chart_territories = pick[:min(10, len(pick))]
+    if not focus:
+        st.info(t("need_focus_vars"), icon=":material/tune:")
+    elif not chart_territories:
+        st.info(t("need_focus_terr"), icon=":material/tune:")
     else:
-        chart_mode = "Multiyear comparison"
-        st.caption("Multiyear comparison")
-with chart_c:
-    if period != "Multiyear":
-        safe_multiselect_state(f"focus_area_{level}_{period}", pick)
-        chart_territories = st.multiselect("Territories in main chart", pick,
-            default=pick[:min(4, len(pick))], format_func=lambda i: label_of.get(i, i),
-            key=f"focus_area_{level}_{period}")
-    else:
-        chart_territories = pick[:min(10, len(pick))]
-if not focus:
-    st.info("Choose variables in 'Variables in main chart' to visualize trajectories.")
-elif not chart_territories:
-    st.info("Choose a territory in 'Territories in main chart'.")
-else:
-    plot_long = prepare_long(filtered[filtered.territory_id.isin(chart_territories)], focus, period, meta)
-    if plot_long.empty:
-        st.info("No valid values for this chart selection.")
-    elif period == "Multiyear":
-        fig = px.bar(plot_long, x="territory_label", y="value", color="variable", barmode="group",
-            color_discrete_map=variable_color_map(focus, meta), facet_row="unit", height=max(410, 240 * plot_long.unit.nunique()),
-            labels={"value": "Value", "territory_label": "Territory"})
-        fig.for_each_annotation(lambda a: a.update(text=a.text.replace("unit=", "")))
-        st.plotly_chart(prettify(fig, max(410, 240 * plot_long.unit.nunique())), use_container_width=True)
-    elif chart_mode == "Diverging z-score heatmap":
-        plot_long["z"] = zscore_column(plot_long)
-        # A separate heatmap per territory prevents averaging z-scores across unrelated regions.
-        panels = st.columns(min(2, len(chart_territories)))
-        for idx, territory in enumerate(chart_territories):
-            part = plot_long[plot_long.territory_id == territory].copy()
-            if part.empty:
-                continue
-            if period == "Monthly":
-                part["time_label"] = part["time"].dt.strftime("%Y-%m")
+        plot_long = prepare_long(filtered[filtered.territory_id.isin(chart_territories)], focus, period, meta)
+        colors = {vname(k): v for k, v in variable_color_map(focus, meta).items()}
+        series_labels = {"value": t("value"), "territory_label": t("territory"), "variable_label": t("variable"),
+                         "time": t("date"), "unit": "", "year": t("year"), "month": t("month")}
+        if plot_long.empty:
+            st.info(t("no_valid"))
+        elif period == "Multiyear":
+            fig = px.bar(plot_long, x="territory_label", y="value", color="variable_label", barmode="group",
+                color_discrete_map=colors, facet_row="unit", height=max(410, 240 * plot_long.unit.nunique()),
+                labels=series_labels)
+            fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+            st.plotly_chart(prettify(fig, max(410, 240 * plot_long.unit.nunique())), width="stretch")
+        elif chart_mode == "zheat":
+            plot_long["z"] = zscore_column(plot_long)
+            # A separate heatmap per territory prevents averaging z-scores across unrelated regions.
+            panels = st.columns(min(2, len(chart_territories)))
+            for idx, territory in enumerate(chart_territories):
+                part = plot_long[plot_long.territory_id == territory].copy()
+                if part.empty:
+                    continue
+                if period == "Monthly":
+                    part["time_label"] = part["time"].dt.strftime("%Y-%m")
+                else:
+                    part["time_label"] = part["year"].astype(str)
+                matrix = part.pivot_table(index="variable_label", columns="time_label", values="z", aggfunc="mean")
+                if matrix.empty:
+                    continue
+                fig = px.imshow(matrix, color_continuous_scale=DIVERGING, zmin=-3, zmax=3, aspect="auto",
+                    labels={"color": "Z-score", "x": t("date"), "y": t("variable")})
+                fig.update_xaxes(nticks=12)
+                fig.update_layout(title=label_of.get(territory, str(territory)), height=max(270, 80 + 42 * len(matrix)),
+                    margin=dict(l=5, r=5, t=55, b=25), coloraxis_colorbar=dict(title="z"))
+                with panels[idx % len(panels)]:
+                    st.plotly_chart(style_fig(fig), width="stretch", key=f"zheat_{idx}_{level}_{period}")
+            st.caption(t("zheat_note"))
+        else:
+            if chart_mode == "ztraj":
+                plot_long["plot_value"] = zscore_column(plot_long)
+                y_label = t("y_z")
+            elif chart_mode == "index":
+                baseline = plot_long.sort_values("time").groupby(["territory_id", "variable"], observed=True)["value"].transform("first")
+                plot_long["plot_value"] = 100 * plot_long["value"] / baseline.replace(0, np.nan)
+                y_label = t("y_index")
+            elif chart_mode == "pct":
+                baseline = plot_long.sort_values("time").groupby(["territory_id", "variable"], observed=True)["value"].transform("first")
+                plot_long["plot_value"] = 100 * (plot_long["value"] - baseline) / baseline.abs().replace(0, np.nan)
+                y_label = t("y_pct")
             else:
-                part["time_label"] = part["year"].astype(str)
-            matrix = part.pivot_table(index="variable", columns="time_label", values="z", aggfunc="mean")
-            if matrix.empty:
-                continue
-            fig = px.imshow(matrix, color_continuous_scale=DIVERGING, zmin=-3, zmax=3, aspect="auto",
-                labels={"color": "Z-score", "x": "Date", "y": "Variable"})
-            fig.update_xaxes(nticks=12)
-            fig.update_layout(title=label_of.get(territory, str(territory)), height=max(270, 80 + 42 * len(matrix)),
-                margin=dict(l=5, r=5, t=55, b=25), coloraxis_colorbar=dict(title="z"))
-            with panels[idx % len(panels)]:
-                st.plotly_chart(fig, use_container_width=True, key=f"zheat_{idx}_{level}_{period}")
-        st.caption("Blue = below each variable's own mean; warm = above. Each series is standardized within its territory and selected time interval. Color saturates beyond ±3 SD; data are not clipped.")
-    else:
-        if chart_mode == "Z-score trajectories":
-            plot_long["plot_value"] = zscore_column(plot_long)
-            y_label = "Z-score (standard deviations)"
-        elif chart_mode == "Index (first = 100)":
-            baseline = plot_long.sort_values("time").groupby(["territory_id", "variable"], observed=True)["value"].transform("first")
-            plot_long["plot_value"] = 100 * plot_long["value"] / baseline.replace(0, np.nan)
-            y_label = "Index (first observed = 100)"
-        elif chart_mode == "Percent change from first":
-            baseline = plot_long.sort_values("time").groupby(["territory_id", "variable"], observed=True)["value"].transform("first")
-            plot_long["plot_value"] = 100 * (plot_long["value"] - baseline) / baseline.abs().replace(0, np.nan)
-            y_label = "Change from first observed (%)"
-        else:
-            plot_long["plot_value"] = plot_long["value"]
-            y_label = "Observed value"
-        if chart_mode == "Raw values by unit":
-            nu = plot_long.unit.nunique()
-            fig = px.line(plot_long, x="time", y="plot_value", color="variable", line_dash="territory_label",
-                facet_row="unit", facet_row_spacing=min(.065, .24 / max(1, nu - 1)),
-                color_discrete_map=variable_color_map(focus, meta), hover_data=["territory_label", "value"],
-                labels={"plot_value": y_label, "time": "Date"})
-            fig.for_each_annotation(lambda a: a.update(text=a.text.replace("unit=", "")))
-            h = max(420, 235 * nu)
-        else:
-            fig = px.line(plot_long, x="time", y="plot_value", color="variable", line_dash="territory_label",
-                color_discrete_map=variable_color_map(focus, meta), hover_data=["territory_label", "value", "unit"],
-                labels={"plot_value": y_label, "time": "Date"})
-            fig.add_hline(y=100 if chart_mode == "Index (first = 100)" else 0, line_width=1,
-                line_dash="dot", line_color="#7A8790", opacity=.85)
-            if chart_mode == "Z-score trajectories":
-                # Diverging marker colors encode the signed anomaly at each date;
-                # line colors still identify the metric across all plots.
-                for (_, _), points in plot_long.groupby(["territory_id", "variable"], observed=True):
-                    fig.add_trace(go.Scatter(x=points["time"], y=points["plot_value"],
-                        mode="markers", marker=dict(size=5, opacity=.8,
-                            color=points["plot_value"], coloraxis="coloraxis"),
-                        hoverinfo="skip", showlegend=False))
-                fig.update_layout(coloraxis=dict(colorscale=DIVERGING, cmin=-2.5, cmax=2.5,
-                    colorbar=dict(title="Signed z", thickness=12, len=.65)))
-            h = 500
-        st.plotly_chart(prettify(fig, h), use_container_width=True)
-        st.caption("Color identifies the variable; line style identifies the territory. Z-scores and baseline indices are visualization transformations, not replacements for original measurements. Zero baselines yield undefined relative changes.")
+                plot_long["plot_value"] = plot_long["value"]
+                y_label = t("y_raw")
+            labels = dict(series_labels, plot_value=y_label)
+            if chart_mode == "raw":
+                nu = plot_long.unit.nunique()
+                fig = px.line(plot_long, x="time", y="plot_value", color="variable_label", line_dash="territory_label",
+                    facet_row="unit", facet_row_spacing=min(.065, .24 / max(1, nu - 1)),
+                    color_discrete_map=colors, hover_data=["territory_label", "value"], labels=labels)
+                fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+                h = max(420, 235 * nu)
+            else:
+                fig = px.line(plot_long, x="time", y="plot_value", color="variable_label", line_dash="territory_label",
+                    color_discrete_map=colors, hover_data=["territory_label", "value", "unit"], labels=labels)
+                fig.add_hline(y=100 if chart_mode == "index" else 0, line_width=1,
+                    line_dash="dot", line_color="#7A8790", opacity=.85)
+                if chart_mode == "ztraj":
+                    # Diverging marker colors encode the signed anomaly at each date;
+                    # line colors still identify the metric across all plots.
+                    for (_, _), points in plot_long.groupby(["territory_id", "variable"], observed=True):
+                        fig.add_trace(go.Scatter(x=points["time"], y=points["plot_value"],
+                            mode="markers", marker=dict(size=5, opacity=.8,
+                                color=points["plot_value"], coloraxis="coloraxis"),
+                            hoverinfo="skip", showlegend=False))
+                    fig.update_layout(coloraxis=dict(colorscale=DIVERGING, cmin=-2.5, cmax=2.5,
+                        colorbar=dict(title=t("signed_z"), thickness=12, len=.65)))
+                h = 500
+            st.plotly_chart(prettify(fig, h), width="stretch")
+            st.caption(t("series_note"))
 
 # ----------------------- Multivariate relationships -----------------------
-st.divider()
-st.subheader("Cross-variable relationships · linear regression")
-if len(selected) >= 2:
-    rcols = st.columns([1.2, 1.2, 1.0, 1.0])
-    xvar = rcols[0].selectbox("X variable", selected, index=0, format_func=lambda m: metric_label(m, meta), key=f"x_{level}_{period}")
-    yvar = rcols[1].selectbox("Y variable", selected, index=min(1, len(selected) - 1), format_func=lambda m: metric_label(m, meta), key=f"y_{level}_{period}")
-    choices = ["None"] + [m for m in selected if m not in (xvar, yvar)]
-    hue = rcols[2].selectbox("Color by third variable", choices, format_func=lambda m: "Territory" if m == "None" else metric_label(m, meta), key=f"hue_{level}_{period}")
-    sz = rcols[3].selectbox("Size by fourth variable", choices, format_func=lambda m: "Equal size" if m == "None" else metric_label(m, meta), key=f"size_{level}_{period}")
-    if xvar == yvar:
-        st.info("Choose different X and Y variables for regression.")
-    else:
-        basic_cols = ["territory_label", "territory_id", xvar, yvar]
-        time_cols = ["year", "month"] if period == "Monthly" else ["year"] if period == "Annual" else ["period"]
-        plot_cols = list(dict.fromkeys(basic_cols + time_cols + ([hue] if hue != "None" else []) + ([sz] if sz != "None" else [])))
-        scatter = filtered[plot_cols].copy()
-        for m in [xvar, yvar] + ([hue] if hue != "None" else []) + ([sz] if sz != "None" else []):
-            scatter[m] = pd.to_numeric(scatter[m], errors="coerce")
-        scatter = scatter.replace([np.inf, -np.inf], np.nan).dropna(subset=[xvar, yvar])
-        if sz != "None":
-            scatter["marker_size"] = scatter[sz].clip(lower=0).fillna(0.0)
-            if not scatter["marker_size"].gt(0).any():
-                scatter["marker_size"] = 1.0
-                st.info("Selected size variable has no positive values; markers use equal size.")
-        leg, statscol = st.columns([2.25, 1], gap="large")
-        with leg:
-            if hue == "None":
-                fig = px.scatter(scatter, x=xvar, y=yvar, color="territory_label",
-                    color_discrete_sequence=SERIES_COLORS,
-                    size="marker_size" if sz != "None" else None, hover_data=time_cols,
-                    labels={xvar: metric_label(xvar, meta), yvar: metric_label(yvar, meta)}, opacity=.65)
-            else:
-                fig = px.scatter(scatter.dropna(subset=[hue]), x=xvar, y=yvar, color=hue,
-                    color_continuous_scale=DIVERGING if palette_family(hue, meta) == "diverging" else map_scale(hue, meta),
-                    size="marker_size" if sz != "None" else None,
-                    hover_data=["territory_label"] + time_cols,
-                    labels={xvar: metric_label(xvar, meta), yvar: metric_label(yvar, meta)}, opacity=.68)
-            fit = linear_regression(scatter, xvar, yvar)
-            if fit:
-                xx = np.linspace(fit["xmin"], fit["xmax"], 100)
-                yy = fit["slope"] * xx + fit["intercept"]
-                fig.add_trace(go.Scatter(x=xx, y=yy, mode="lines", name=f"OLS · R²={fit['r2']:.3f} · p={format_p(fit['p_value'])}",
-                    line=dict(color="#1B364A", width=3, dash="dash"), hovertemplate="OLS fitted line<extra></extra>"))
-            st.plotly_chart(prettify(fig, 470), use_container_width=True)
-        with statscol:
-            st.markdown("**Pooled ordinary least squares**")
-            if fit:
-                st.metric("Linear R²", f"{fit['r2']:.3f}")
-                st.metric("Pearson r", f"{fit['r']:+.3f}")
-                st.metric("p-value (two-sided; nominal)", format_p(fit["p_value"]))
-                st.metric("Slope (β₁)", f"{fit['slope']:,.4g}")
-                st.metric("Sample size (rows)", f"{fit['n']:,}")
-                st.caption(f"ŷ = {fit['intercept']:.4g} + ({fit['slope']:.4g}) × X")
-                st.caption(f"95% CI for slope: [{fit['ci95_low']:.4g}, {fit['ci95_high']:.4g}]")
-                st.caption("H₀: β₁ = 0 (equivalently Pearson r = 0 in simple OLS with an intercept).")
-                if fit["p_value"] < .05:
-                    st.caption("Nominal p < 0.05 under an independence assumption; not causal evidence.")
-            else:
-                st.info("Statistics unavailable: at least three complete observations and variation in both X and Y are required.")
-            st.warning("Inference caution: nominal p-values and confidence intervals assume independent errors. Repeated years/months within territories, temporal trends and spatial dependence violate this assumption; these results are exploratory, not robust tests of causality or significance.", icon="⚠️")
-        if scatter.territory_id.nunique() > 1:
-            with st.expander("Linear regressions by territory (R², p-value, CI)", expanded=False):
-                rows = []
-                for tid, part in scatter.groupby("territory_id"):
-                    fitted = linear_regression(part, xvar, yvar)
-                    if fitted:
-                        rows.append({"Territory": label_of.get(tid, tid), "n": fitted["n"],
-                                     "Slope": fitted["slope"], "Intercept": fitted["intercept"],
-                                     "Pearson r": fitted["r"], "R²": fitted["r2"],
-                                     "p (two-sided, nominal)": fitted["p_value"],
-                                     "Slope CI95 lower": fitted["ci95_low"],
-                                     "Slope CI95 upper": fitted["ci95_high"]})
-                if rows:
-                    st.dataframe(pd.DataFrame(rows).sort_values("R²", ascending=False), hide_index=True, use_container_width=True)
+with tab_reg:
+    section(t("reg_title"), t("reg_lead"))
+    if len(selected) >= 2:
+        rcols = st.columns([1.2, 1.2, 1.0, 1.0])
+        xvar = rcols[0].selectbox(t("x_var"), selected, index=0, format_func=lambda m: metric_label(m, meta), key=f"x_{level}_{period}")
+        yvar = rcols[1].selectbox(t("y_var"), selected, index=min(1, len(selected) - 1), format_func=lambda m: metric_label(m, meta), key=f"y_{level}_{period}")
+        choices = ["None"] + [m for m in selected if m not in (xvar, yvar)]
+        hue = rcols[2].selectbox(t("hue_var"), choices, format_func=lambda m: t("hue_none") if m == "None" else metric_label(m, meta), key=f"hue_{level}_{period}")
+        sz = rcols[3].selectbox(t("size_var"), choices, format_func=lambda m: t("size_none") if m == "None" else metric_label(m, meta), key=f"size_{level}_{period}")
+        if xvar == yvar:
+            st.info(t("need_diff_xy"))
+        else:
+            basic_cols = ["territory_label", "territory_id", xvar, yvar]
+            plot_cols = list(dict.fromkeys(basic_cols + time_cols + ([hue] if hue != "None" else []) + ([sz] if sz != "None" else [])))
+            scatter = filtered[plot_cols].copy()
+            for m in [xvar, yvar] + ([hue] if hue != "None" else []) + ([sz] if sz != "None" else []):
+                scatter[m] = pd.to_numeric(scatter[m], errors="coerce")
+            scatter = scatter.replace([np.inf, -np.inf], np.nan).dropna(subset=[xvar, yvar])
+            if sz != "None":
+                scatter["marker_size"] = scatter[sz].clip(lower=0).fillna(0.0)
+                if not scatter["marker_size"].gt(0).any():
+                    scatter["marker_size"] = 1.0
+                    st.info(t("no_positive_size"))
+            scatter_labels = dict(axis_names, **{xvar: metric_label(xvar, meta), yvar: metric_label(yvar, meta)})
+            if hue != "None":
+                scatter_labels[hue] = metric_label(hue, meta)
+            if sz != "None":
+                scatter_labels[sz] = metric_label(sz, meta)
+                scatter_labels["marker_size"] = metric_label(sz, meta)
+            leg, statscol = st.columns([2.25, 1], gap="large")
+            with leg:
+                if hue == "None":
+                    fig = px.scatter(scatter, x=xvar, y=yvar, color="territory_label",
+                        color_discrete_sequence=SERIES_COLORS,
+                        size="marker_size" if sz != "None" else None, hover_data=time_cols,
+                        labels=scatter_labels, opacity=.65)
                 else:
-                    st.info("Not enough variation per territory for separate regressions.")
-        if len(selected) >= 3:
-            with st.expander("Explore three variables in 3D", expanded=False):
-                zopts = [m for m in selected if m not in (xvar, yvar)]
-                zvar = st.selectbox("Z variable", zopts, format_func=lambda m: metric_label(m, meta), key=f"z_{level}_{period}")
-                subset = filtered[["territory_label", xvar, yvar, zvar] + time_cols].copy()
-                for m in (xvar, yvar, zvar):
-                    subset[m] = pd.to_numeric(subset[m], errors="coerce")
-                subset = subset.replace([np.inf, -np.inf], np.nan).dropna(subset=[xvar, yvar, zvar])
-                if not subset.empty:
-                    fig = px.scatter_3d(subset, x=xvar, y=yvar, z=zvar, color="territory_label",
-                        color_discrete_sequence=SERIES_COLORS, opacity=.75,
-                        hover_data=time_cols, height=570)
-                    fig.update_layout(margin=dict(l=0, r=0, t=25, b=0))
-                    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("Select at least two variables in the sidebar for regression and multivariate relationships.")
+                    fig = px.scatter(scatter.dropna(subset=[hue]), x=xvar, y=yvar, color=hue,
+                        color_continuous_scale=DIVERGING if palette_family(hue, meta) == "diverging" else map_scale(hue, meta),
+                        size="marker_size" if sz != "None" else None,
+                        hover_data=["territory_label"] + time_cols,
+                        labels=scatter_labels, opacity=.68)
+                fit = linear_regression(scatter, xvar, yvar)
+                if fit:
+                    xx = np.linspace(fit["xmin"], fit["xmax"], 100)
+                    yy = fit["slope"] * xx + fit["intercept"]
+                    fig.add_trace(go.Scatter(x=xx, y=yy, mode="lines",
+                        name=t("ols_line", r2=fmt_num(fit["r2"], ".3f"), p=format_p(fit["p_value"])),
+                        line=dict(color="#1B364A", width=3, dash="dash"), hovertemplate=t("ols_hover") + "<extra></extra>"))
+                st.plotly_chart(prettify(fig, 500), width="stretch")
+            with statscol:
+                st.markdown(f'<div class="mb-label">{t("pooled_ols")}</div>', unsafe_allow_html=True)
+                if fit:
+                    m1, m2 = st.columns(2)
+                    m1.metric(t("r2"), fmt_num(fit["r2"], ".3f"))
+                    m2.metric(t("pearson"), fmt_num(fit["r"], "+.3f"))
+                    st.metric(t("pval"), format_p(fit["p_value"]))
+                    m3, m4 = st.columns(2)
+                    m3.metric(t("slope"), fmt_num(fit["slope"], ",.4g"))
+                    m4.metric(t("n_rows"), fmt_num(fit["n"], ",d"))
+                    st.caption(f"ŷ = {fmt_num(fit['intercept'], '.4g')} + ({fmt_num(fit['slope'], '.4g')}) × X")
+                    st.caption(t("ci95", lo=fmt_num(fit["ci95_low"], ".4g"), hi=fmt_num(fit["ci95_high"], ".4g")))
+                    st.caption(t("h0"))
+                    if fit["p_value"] < .05:
+                        st.caption(t("p_sig"))
+                else:
+                    st.info(t("stats_unavailable"))
+                st.warning(t("inference_warning"), icon=":material/warning:")
+            if scatter.territory_id.nunique() > 1:
+                with st.expander(t("reg_by_terr"), expanded=False, icon=":material/table_chart:"):
+                    rows = []
+                    for tid, part in scatter.groupby("territory_id"):
+                        fitted = linear_regression(part, xvar, yvar)
+                        if fitted:
+                            rows.append({t("col_territory"): label_of.get(tid, tid), t("col_n"): fitted["n"],
+                                         t("col_slope"): fitted["slope"], t("col_intercept"): fitted["intercept"],
+                                         t("pearson"): fitted["r"], "R²": fitted["r2"],
+                                         t("col_p"): fitted["p_value"],
+                                         t("col_ci_lo"): fitted["ci95_low"],
+                                         t("col_ci_hi"): fitted["ci95_high"]})
+                    if rows:
+                        st.dataframe(pd.DataFrame(rows).sort_values("R²", ascending=False), hide_index=True, width="stretch")
+                    else:
+                        st.info(t("not_enough_terr"))
+            if len(selected) >= 3:
+                with st.expander(t("explore_3d"), expanded=False, icon=":material/view_in_ar:"):
+                    zopts = [m for m in selected if m not in (xvar, yvar)]
+                    zvar = st.selectbox(t("z_var"), zopts, format_func=lambda m: metric_label(m, meta), key=f"z_{level}_{period}")
+                    subset = filtered[["territory_label", xvar, yvar, zvar] + time_cols].copy()
+                    for m in (xvar, yvar, zvar):
+                        subset[m] = pd.to_numeric(subset[m], errors="coerce")
+                    subset = subset.replace([np.inf, -np.inf], np.nan).dropna(subset=[xvar, yvar, zvar])
+                    if not subset.empty:
+                        fig = px.scatter_3d(subset, x=xvar, y=yvar, z=zvar, color="territory_label",
+                            color_discrete_sequence=SERIES_COLORS, opacity=.75,
+                            hover_data=time_cols, height=570,
+                            labels=dict(scatter_labels, **{zvar: metric_label(zvar, meta)}))
+                        fig.update_layout(margin=dict(l=0, r=0, t=25, b=0), legend_title_text="")
+                        st.plotly_chart(style_fig(fig), width="stretch")
+    else:
+        st.info(t("need_two_vars"), icon=":material/tune:")
 
 # --------------------------- Correlations ---------------------------------
-st.divider()
-st.subheader("Correlation and multivariate patterns")
-corr_cols = st.columns([2, 1])
-with corr_cols[0]:
-    correlation_choices = selected[:min(len(selected), 24)]
-    safe_multiselect_state(f"corr_{level}_{period}", selected)
-    corr_sel = st.multiselect("Metrics in correlation matrix", selected,
-        default=correlation_choices[:min(10, len(correlation_choices))],
-        format_func=lambda m: metric_label(m, meta), key=f"corr_{level}_{period}")
-    if len(corr_sel) >= 2:
-        rmat, pmat, qmat, nmat, pair_table = correlation_tests(filtered, corr_sel)
-        if not pair_table.empty:
-            k = len(corr_sel)
-            hdata = np.empty((k, k, 3), dtype=object)
-            labels = np.empty((k, k), dtype=object)
-            for i in range(k):
-                for j in range(k):
-                    hdata[i, j] = [format_p(pmat[i, j]), format_p(qmat[i, j]), str(nmat[i, j])]
-                    if np.isfinite(rmat[i, j]) and k <= 12:
-                        significant = i != j and np.isfinite(qmat[i, j]) and qmat[i, j] < .05
-                        labels[i, j] = f"{rmat[i, j]:.2f}" + ("*" if significant else "")
-                    else:
-                        labels[i, j] = ""
-            heatmap = go.Heatmap(
-                z=rmat, x=corr_sel, y=corr_sel, zmin=-1, zmax=1, zmid=0,
-                colorscale=DIVERGING, colorbar=dict(title="Pearson r"),
-                customdata=hdata, text=labels,
-                hovertemplate=("X: %{x}<br>Y: %{y}<br>Pearson r: %{z:.3f}"
-                               "<br>p (nominal, two-sided): %{customdata[0]}"
-                               "<br>q (FDR-BH): %{customdata[1]}"
-                               "<br>n (paired observations): %{customdata[2]}<extra></extra>"),
-            )
-            heatmap.texttemplate = "%{text}" if k <= 12 else None
-            fig = go.Figure(data=[heatmap])
-            fig.update_layout(height=max(440, k * 35 + 180),
-                              margin=dict(l=10, r=10, t=35, b=10),
-                              font=dict(family="Arial", color="#234153"))
-            fig.update_yaxes(autorange="reversed")
-            st.plotly_chart(fig, use_container_width=True)
-            st.caption("* marks off-diagonal correlations with FDR-BH q < 0.05. Hover over a cell for nominal p, adjusted q and paired n. Diagonal cells have no hypothesis test.")
-            with st.expander("Pairwise correlations · p-values and FDR-adjusted q-values", expanded=False):
-                st.dataframe(pair_table, use_container_width=True, hide_index=True)
-                st.download_button("Download correlation tests (.csv)",
-                    pair_table.to_csv(index=False).encode("utf-8-sig"),
-                    file_name=f"mapbiomas_correlations_{level}_{period.lower()}.csv", mime="text/csv")
+with tab_corr:
+    section(t("corr_title"), t("corr_lead"))
+    corr_cols = st.columns([2, 1], gap="large")
+    with corr_cols[0]:
+        correlation_choices = selected[:min(len(selected), 24)]
+        corr_key = f"corr_{level}_{period}"
+        if corr_key not in st.session_state:
+            st.session_state[corr_key] = correlation_choices[:min(10, len(correlation_choices))]
+        safe_multiselect_state(corr_key, selected)
+        corr_sel = st.multiselect(t("corr_metrics"), selected,
+            format_func=lambda m: metric_label(m, meta), key=corr_key)
+        if len(corr_sel) >= 2:
+            rmat, pmat, qmat, nmat, pair_table = correlation_tests(filtered, corr_sel)
+            if not pair_table.empty:
+                k = len(corr_sel)
+                hdata = np.empty((k, k, 3), dtype=object)
+                labels = np.empty((k, k), dtype=object)
+                for i in range(k):
+                    for j in range(k):
+                        hdata[i, j] = [format_p(pmat[i, j]), format_p(qmat[i, j]), str(nmat[i, j])]
+                        if np.isfinite(rmat[i, j]) and k <= 12:
+                            significant = i != j and np.isfinite(qmat[i, j]) and qmat[i, j] < .05
+                            labels[i, j] = fmt_num(rmat[i, j], ".2f") + ("*" if significant else "")
+                        else:
+                            labels[i, j] = ""
+                axis = [vname(m) for m in corr_sel]
+                heatmap = go.Heatmap(
+                    z=rmat, x=axis, y=axis, zmin=-1, zmax=1, zmid=0,
+                    colorscale=DIVERGING, colorbar=dict(title=t("pearson")),
+                    customdata=hdata, text=labels, hovertemplate=t("corr_hover"),
+                )
+                heatmap.texttemplate = "%{text}" if k <= 12 else None
+                fig = go.Figure(data=[heatmap])
+                fig.update_layout(height=max(460, k * 38 + 200), margin=dict(l=10, r=10, t=35, b=10))
+                fig.update_yaxes(autorange="reversed")
+                st.plotly_chart(style_fig(fig), width="stretch")
+                st.caption(t("corr_note"))
+                with st.expander(t("pair_table"), expanded=False, icon=":material/table_chart:"):
+                    shown = pair_table.copy()
+                    shown["Variable X"] = shown["Variable X"].map(vname)
+                    shown["Variable Y"] = shown["Variable Y"].map(vname)
+                    shown = shown.rename(columns=t("pair_cols"))
+                    st.dataframe(shown, width="stretch", hide_index=True)
+                    st.download_button(t("download_corr"), shown.to_csv(index=False).encode("utf-8-sig"),
+                        file_name=f"mapbiomas_correlations_{level}_{period.lower()}.csv", mime="text/csv",
+                        icon=":material/download:")
+            else:
+                st.info(t("no_pairs"))
         else:
-            st.info("No eligible correlation pairs: each test needs at least three paired observations and variation in both metrics.")
-    else:
-        st.info("Choose at least two metrics to calculate Pearson correlations.")
-with corr_cols[1]:
-    st.markdown("**Cross-variable analysis**")
-    st.caption("The Pearson matrix uses all observations in the selected time and territorial filters. The blue–neutral–warm diverging scale is always fixed at −1…+1.")
-    st.caption("The p-value tests H₀: Pearson r = 0 (two-sided). q-values control the Benjamini–Hochberg false discovery rate across the tested pairs in the visible matrix.")
-    st.caption("These p-values assume independent observations and are exploratory for time-series and repeated territories. Multiple-testing adjustment does not correct temporal or spatial dependence.")
-    if period == "Monthly" and len(selected):
-        st.markdown("**Monthly seasonal profile**")
-        seas_var = st.selectbox("Seasonal metric", selected, format_func=lambda m: metric_label(m, meta), key=f"season_{level}")
-        seas = filtered[["territory_label", "month", seas_var]].copy()
-        seas[seas_var] = pd.to_numeric(seas[seas_var], errors="coerce")
-        seas = seas.groupby(["territory_label", "month"], as_index=False)[seas_var].mean()
-        fig = px.line(seas, x="month", y=seas_var, color="territory_label",
-            color_discrete_sequence=SERIES_COLORS, markers=True)
-        fig.update_xaxes(tickmode="array", tickvals=list(range(1, 13)), ticktext=MONTH_NAMES)
-        st.plotly_chart(prettify(fig, 350), use_container_width=True)
-        st.caption("Mean of monthly observations over selected years; does not represent annual totals.")
+            st.info(t("need_two_corr"), icon=":material/tune:")
+    with corr_cols[1]:
+        with st.container(border=True):
+            st.markdown(f'<div class="mb-label">{t("cross_analysis")}</div>', unsafe_allow_html=True)
+            st.caption(t("corr_c1"))
+            st.caption(t("corr_c2"))
+            st.caption(t("corr_c3"))
+        if period == "Monthly" and len(selected):
+            st.markdown(f'<div class="mb-label">{t("seasonal")}</div>', unsafe_allow_html=True)
+            seas_var = st.selectbox(t("seasonal_var"), selected, format_func=lambda m: metric_label(m, meta), key=f"season_{level}")
+            seas = filtered[["territory_label", "month", seas_var]].copy()
+            seas[seas_var] = pd.to_numeric(seas[seas_var], errors="coerce")
+            seas = seas.groupby(["territory_label", "month"], as_index=False)[seas_var].mean()
+            fig = px.line(seas, x="month", y=seas_var, color="territory_label",
+                color_discrete_sequence=SERIES_COLORS, markers=True,
+                labels=dict(axis_names, **{seas_var: metric_label(seas_var, meta)}))
+            fig.update_xaxes(tickmode="array", tickvals=list(range(1, 13)), ticktext=MONTH_NAMES)
+            st.plotly_chart(prettify(fig, 360), width="stretch")
+            st.caption(t("seasonal_note"))
 
 # --------------------------- Data / provenance ----------------------------
-with st.expander("View observations · export CSV", expanded=False):
-    time_cols = ["year", "month"] if period == "Monthly" else ["year"] if period == "Annual" else ["period"]
+with tab_data:
+    section(t("data_title"), t("data_lead"))
     cols = ["territory_id", "territory_name"] + time_cols + list(selected)
     displayed = filtered[cols].copy()
-    st.dataframe(displayed, use_container_width=True, hide_index=True, height=350)
-    st.download_button("Download filtered values (.csv)", displayed.to_csv(index=False).encode("utf-8-sig"),
-        file_name=f"mapbiomas_atmosphere_{level}_{period.lower()}_filtered.csv", mime="text/csv")
-with st.expander("Methods · metric dictionary · licensing"):
-    descriptions = pd.DataFrame([r for r in dictionary if r.get("period") == period and r.get("column_name") in selected])
-    st.dataframe(descriptions, hide_index=True, use_container_width=True)
-    st.markdown("""**Dataset:** values are read from the existing XLSX-derived Parquet files; the app performs no Earth Engine/GCS queries.
+    st.dataframe(displayed, width="stretch", hide_index=True, height=380,
+                 column_config={m: st.column_config.NumberColumn(metric_label(m, meta)) for m in selected})
+    st.download_button(t("download_data"), displayed.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"mapbiomas_atmosphere_{level}_{period.lower()}_filtered.csv", mime="text/csv",
+        type="primary", icon=":material/download:")
+    st.markdown("<div style='height:.6rem'></div>", unsafe_allow_html=True)
+    with st.expander(t("methods_title"), expanded=False, icon=":material/menu_book:"):
+        descriptions = pd.DataFrame([r for r in dictionary if r.get("period") == period and r.get("column_name") in selected])
+        st.dataframe(descriptions, hide_index=True, width="stretch")
+        st.markdown(t("methods_md"))
 
-**Geography:** territorial geometries are genuine GEE exports, normalized only to polygonal GeoJSON types for Plotly display.
-
-**Visualization only:** paired differences, percentages, z-scores, Pearson correlations and ordinary least-squares regressions are calculated dynamically from the selected observations. No transformations overwrite the underlying data.
-
-**Statistical inference:** nominal two-sided p-values for Pearson r and the simple OLS slope are computed using SciPy; the slope 95% confidence interval uses the Student t distribution. Correlation-matrix q-values use Benjamini–Hochberg adjustment across the valid off-diagonal variable pairs. These significance calculations presume independent observations and do **not** correct for trends, serial correlation, shared territory, heteroskedasticity or spatial dependence. Treat them as exploratory until an appropriate time-series/panel-data model is fitted.
-
-**Palettes:** brand colors are documented in the [MapBiomas identity guide](https://brasil.mapbiomas.org/wp-content/uploads/sites/4/2024/10/manual-de-marca_MapBiomas_PT_versao-site_16.10.24.pdf). The [land-cover class legend](https://brasil.mapbiomas.org/iniciativas-e-produtos/cobertura-e-uso-da-terra/cobertura-30m/cobertura/) is categorical and does not determine continuous atmospheric color scales. Continuous colors in this dashboard are designed to be semantically consistent; they are not claimed to reproduce the exact map styles of every official MapBiomas Atmosphere layer.
-""")
-st.caption("MapBiomas Atmosphere · Community explorer · Original data retain their source attribution and licensing.")
+st.markdown(f'<div class="mb-footer">{t("footer")}</div>', unsafe_allow_html=True)
