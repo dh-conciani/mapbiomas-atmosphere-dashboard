@@ -56,6 +56,30 @@ if "lang" not in st.session_state:
     st.session_state["lang"] = requested if requested in i18n.LANGS else i18n.DEFAULT_LANG
 LANG = st.session_state["lang"]
 
+# -------------------------------- Theme ------------------------------------
+# Light is the default. The header toggle (or ?theme=dark) switches Streamlit's
+# own light/dark theme, so native widgets, tables and charts all follow it.
+THEME = "dark" if getattr(st.context.theme, "type", None) == "dark" else "light"
+PALETTE = {
+    "light": {"ink": "#163548", "text": "#213D50", "muted": "#6B8290", "grid": "rgba(100,140,158,0.14)",
+              "paper": "#FFFFFF", "map_style": "carto-positron", "outline": "rgba(34,60,75,.58)",
+              "fit": "#1B364A", "ref": "#7A8790",
+              "kpi_bg": ["#E6F2F8", "#E7F4EE", "#F3EEF8", "#FDF1E4"]},
+    "dark": {"ink": "#E8F1F5", "text": "#C9D6DD", "muted": "#8FA3AE", "grid": "rgba(160,190,205,0.13)",
+             "paper": "#0F1418", "map_style": "carto-darkmatter", "outline": "rgba(210,228,236,.45)",
+             "fit": "#F2F6F8", "ref": "#8FA3AE",
+             "kpi_bg": ["#12303F", "#123326", "#2A2140", "#3A2A16"]},
+}[THEME]
+
+
+def _lighten(hex_color, amount=.35):
+    r, g, b = (int(hex_color[k:k + 2], 16) for k in (1, 3, 5))
+    return "#{:02X}{:02X}{:02X}".format(*(round(c + (255 - c) * amount) for c in (r, g, b)))
+
+
+# Brighter categorical colors on the black background keep markers legible.
+SERIES = SERIES_COLORS if THEME == "light" else [_lighten(c) for c in SERIES_COLORS]
+
 
 def t(key, **kwargs):
     text = i18n.T[LANG].get(key, i18n.T["en"].get(key, key))
@@ -100,14 +124,11 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 :root {
-  --mb-ink: #163548; --mb-ink-2: #3E5A6C; --mb-muted: #6B8290;
-  --mb-blue: #2477A5; --mb-teal: #27917A; --mb-sky: #75C7E0; --mb-green: #77B893;
-  --mb-line: #E1EAEE; --mb-soft: #F4F8FA; --mb-radius: 14px;
-  --mb-shadow: 0 1px 2px rgba(22,53,72,.05), 0 6px 18px rgba(22,53,72,.06);
+  --mb-teal: #27917A; --mb-sky: #75C7E0; --mb-green: #77B893; --mb-radius: 14px;
 }
 html, body, [class*="css"], .stApp, .stMarkdown, button, input, textarea, select {
   font-family: 'Inter', 'Segoe UI', Roboto, Arial, sans-serif !important; }
-.stApp { background: #FAFCFD; }
+.stApp { background: var(--mb-bg); }
 .block-container { padding-top: 1.2rem; padding-bottom: 2.4rem; max-width: 1640px; }
 h1, h2, h3, h4 { letter-spacing: -.02em; color: var(--mb-ink); font-weight: 700; }
 
@@ -128,16 +149,18 @@ h1, h2, h3, h4 { letter-spacing: -.02em; color: var(--mb-ink); font-weight: 700;
 .mb-chip { background: rgba(255,255,255,.13); border: 1px solid rgba(255,255,255,.22); color: #FFFFFF;
   padding: .22rem .7rem; border-radius: 999px; font-size: .8rem; font-weight: 500; white-space: nowrap; }
 .mb-chip b { font-weight: 700; }
-.st-key-mb_lang [data-testid="stWidgetLabel"] p { color: #BFE6F1 !important; font-size: .72rem;
+.st-key-mb_lang [data-testid="stWidgetLabel"] p, .st-key-mb_lang [data-testid="stWidgetLabel"] label { color: #BFE6F1 !important; font-size: .72rem;
   font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .st-key-mb_lang button { background: rgba(255,255,255,.12) !important; color: #FFFFFF !important;
-  border-color: rgba(255,255,255,.3) !important; font-weight: 600; min-width: 3.1rem; }
+  border-color: rgba(255,255,255,.3) !important; font-weight: 600; min-width: 2.9rem; }
+.st-key-mb_lang { gap: .9rem !important; }
+.st-key-mb_theme_js { display: none; }
 .st-key-mb_lang button[aria-checked="true"], .st-key-mb_lang button[kind*="Active"] {
-  background: #FFFFFF !important; color: var(--mb-ink) !important; }
+  background: #FFFFFF !important; color: #163548 !important; }
 
 /* ---------- KPI cards ---------- */
 .mb-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; margin: .9rem 0 .4rem 0; }
-.mb-kpi { background: #FFFFFF; border: 1px solid var(--mb-line); border-radius: var(--mb-radius);
+.mb-kpi { background: var(--mb-card); border: 1px solid var(--mb-line); border-radius: var(--mb-radius);
   padding: .85rem 1rem; box-shadow: var(--mb-shadow); display: flex; gap: .8rem; align-items: center; }
 .mb-kpi .ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
   font-size: 1.15rem; flex: none; }
@@ -156,16 +179,16 @@ h1, h2, h3, h4 { letter-spacing: -.02em; color: var(--mb-ink); font-weight: 700;
 .stTabs [data-baseweb="tab"] { height: 2.7rem; padding: 0 1rem; border-radius: 10px 10px 0 0;
   font-weight: 600; color: var(--mb-ink-2); }
 .stTabs [data-baseweb="tab"]:hover { background: var(--mb-soft); color: var(--mb-blue); }
-.stTabs [aria-selected="true"] { color: var(--mb-blue) !important; background: #EEF6FA; }
+.stTabs [aria-selected="true"] { color: var(--mb-blue) !important; background: var(--mb-tab-sel); }
 .stTabs [data-baseweb="tab-highlight"] { background-color: var(--mb-blue); height: 3px; border-radius: 3px; }
 
 /* ---------- Buttons ---------- */
 .stButton > button, .stDownloadButton > button {
   border-radius: 999px; font-weight: 600; font-size: .86rem; padding: .38rem .95rem;
-  border: 1px solid #CFDDE4; color: var(--mb-ink); background: #FFFFFF;
-  transition: all .15s ease; box-shadow: 0 1px 2px rgba(22,53,72,.06); }
+  border: 1px solid var(--mb-btn-border); color: var(--mb-ink); background: var(--mb-card);
+  transition: all .15s ease; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
 .stButton > button:hover, .stDownloadButton > button:hover {
-  border-color: var(--mb-blue); color: var(--mb-blue); background: #F1F8FB; transform: translateY(-1px);
+  border-color: var(--mb-blue); color: var(--mb-blue); background: var(--mb-hover); transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(36,119,165,.15); }
 .stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {
   background: linear-gradient(120deg, #1D6A93, #23806F); color: #FFFFFF; border: none; }
@@ -174,14 +197,14 @@ h1, h2, h3, h4 { letter-spacing: -.02em; color: var(--mb-ink); font-weight: 700;
 
 /* ---------- Cards / containers ---------- */
 [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVerticalBlock"]) { border-radius: var(--mb-radius); }
-div[data-testid="stMetric"] { background: #FFFFFF; border: 1px solid var(--mb-line); border-radius: 12px;
-  padding: .6rem .85rem; box-shadow: 0 1px 2px rgba(22,53,72,.04); }
+div[data-testid="stMetric"] { background: var(--mb-card); border: 1px solid var(--mb-line); border-radius: 12px;
+  padding: .6rem .85rem; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
 [data-testid="stMetricLabel"] p { color: var(--mb-muted); font-size: .78rem; font-weight: 600; }
 [data-testid="stMetricValue"] { font-size: 1.3rem; color: var(--mb-ink); font-weight: 700; }
-[data-testid="stExpander"] details { border-radius: 12px; border-color: var(--mb-line); background: #FFFFFF; }
+[data-testid="stExpander"] details { border-radius: 12px; border-color: var(--mb-line); background: var(--mb-card); }
 [data-testid="stExpander"] summary p { font-weight: 600; color: var(--mb-ink); }
-[data-testid="stPlotlyChart"] { background: #FFFFFF; border: 1px solid var(--mb-line); border-radius: var(--mb-radius);
-  padding: .35rem; box-shadow: 0 1px 2px rgba(22,53,72,.04); }
+[data-testid="stPlotlyChart"] { background: var(--mb-card); border: 1px solid var(--mb-line); border-radius: var(--mb-radius);
+  padding: .35rem; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
 [data-testid="stAlert"] { border-radius: 12px; }
 [data-testid="stCaptionContainer"] { color: var(--mb-muted); }
 
@@ -190,7 +213,7 @@ div[data-testid="stMetric"] { background: #FFFFFF; border: 1px solid var(--mb-li
 [data-testid="stSidebar"] > div:first-child { width: 360px !important; }
 @media (max-width: 750px) { [data-testid="stSidebar"], [data-testid="stSidebar"] > div:first-child {
   min-width: min(360px, 95vw) !important; width: min(360px, 95vw) !important; } }
-[data-testid="stSidebar"] { background: linear-gradient(180deg, #F4F8FA 0%, #EEF4F6 100%); border-right: 1px solid var(--mb-line); }
+[data-testid="stSidebar"] { background: var(--mb-side); border-right: 1px solid var(--mb-line); }
 [data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: .6rem; }
 [data-testid="stSidebar"] .stMultiSelect [data-baseweb="select"] > div { max-height: 168px; overflow-y: auto; }
 [data-testid="stSidebar"] .stButton > button { font-size: .8rem; padding: .28rem .6rem; min-height: 2.1rem; gap: .25rem; }
@@ -205,13 +228,26 @@ div[data-testid="stMetric"] { background: #FFFFFF; border: 1px solid var(--mb-li
   font-weight: 700; font-size: .82rem; letter-spacing: .08em; text-transform: uppercase; }
 .mb-step .n { width: 22px; height: 22px; border-radius: 50%; background: var(--mb-blue); color: #FFF;
   display: grid; place-items: center; font-size: .72rem; letter-spacing: 0; }
-.mb-count { background: #FFFFFF; border: 1px dashed #C7D8E0; border-radius: 10px; padding: .45rem .7rem;
+.mb-count { background: var(--mb-card); border: 1px dashed var(--mb-btn-border); border-radius: 10px; padding: .45rem .7rem;
   font-size: .8rem; color: var(--mb-ink-2); }
 
 .mb-footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--mb-line);
   color: var(--mb-muted); font-size: .8rem; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
+THEME_VARS = {
+    "light": """--mb-ink: #163548; --mb-ink-2: #3E5A6C; --mb-muted: #6B8290; --mb-blue: #2477A5;
+  --mb-line: #E1EAEE; --mb-soft: #F4F8FA; --mb-bg: #FAFCFD; --mb-card: #FFFFFF; --mb-hover: #F1F8FB;
+  --mb-tab-sel: #EEF6FA; --mb-btn-border: #CFDDE4;
+  --mb-side: linear-gradient(180deg, #F4F8FA 0%, #EEF4F6 100%);
+  --mb-shadow: 0 1px 2px rgba(22,53,72,.05), 0 6px 18px rgba(22,53,72,.06);""",
+    "dark": """--mb-ink: #E8F1F5; --mb-ink-2: #C3D2DA; --mb-muted: #8FA3AE; --mb-blue: #5BB8E0;
+  --mb-line: #1F2A31; --mb-soft: #12191E; --mb-bg: #050708; --mb-card: #0F1418; --mb-hover: #14212A;
+  --mb-tab-sel: #10222D; --mb-btn-border: #2A3942;
+  --mb-side: linear-gradient(180deg, #0B1014 0%, #080B0E 100%);
+  --mb-shadow: 0 1px 2px rgba(0,0,0,.5), 0 6px 18px rgba(0,0,0,.45);""",
+}[THEME]
+st.markdown(f"<style>:root {{ {THEME_VARS} }}</style>", unsafe_allow_html=True)
 
 @st.cache_data(show_spinner=False)
 def catalog():
@@ -383,13 +419,14 @@ def map_figure(layer, metric, features, center, zoom, scale, vmin, vmax, label, 
         color=metric, hover_name="territory_label",
         hover_data={"territory_id": True, metric: ":.3f"},
         color_continuous_scale=scale, range_color=(vmin, vmax),
-        map_style="carto-positron", center=center, zoom=zoom, opacity=.83,
+        map_style=PALETTE["map_style"], center=center, zoom=zoom, opacity=.83,
         labels={metric: label, "territory_id": "ID"},
     )
-    fig.update_traces(marker_line_width=.45, marker_line_color="rgba(34,60,75,.58)")
+    fig.update_traces(marker_line_width=.45, marker_line_color=PALETTE["outline"])
     fig.update_layout(height=height, margin=dict(l=0, r=0, t=0, b=0),
         coloraxis_colorbar=dict(title=dict(text="", side="right"), thickness=13, len=.73, x=1.01),
-        font=dict(family=FONT_FAMILY, color="#234153"), separators=",." if LANG == "pt" else ".,")
+        font=dict(family=FONT_FAMILY, color=PALETTE["text"]), separators=",." if LANG == "pt" else ".,",
+        paper_bgcolor=PALETTE["paper"])
     return fig
 
 
@@ -535,13 +572,13 @@ def zscore_column(long):
 
 
 def prettify(fig, height=470):
-    fig.update_layout(height=height, paper_bgcolor="white", plot_bgcolor="white",
-        font=dict(family=FONT_FAMILY, size=12, color="#213D50"),
+    fig.update_layout(height=height, paper_bgcolor=PALETTE["paper"], plot_bgcolor=PALETTE["paper"],
+        font=dict(family=FONT_FAMILY, size=12, color=PALETTE["text"]),
         separators=",." if LANG == "pt" else ".,",
         margin=dict(l=16, r=10, t=56, b=16), hovermode="closest",
         legend=dict(orientation="h", y=-.18, x=0, title=""))
     fig.update_xaxes(showgrid=False, zeroline=False)
-    fig.update_yaxes(gridcolor="rgba(100,140,158,0.14)", zeroline=False)
+    fig.update_yaxes(gridcolor=PALETTE["grid"], zeroline=False)
     return fig
 
 
@@ -553,8 +590,9 @@ def safe_multiselect_state(key, allowed):
 
 def style_fig(fig):
     """Shared typography and locale separators for figures not using prettify()."""
-    fig.update_layout(font=dict(family=FONT_FAMILY, color="#234153"),
-                      separators=",." if LANG == "pt" else ".,", paper_bgcolor="white")
+    fig.update_layout(font=dict(family=FONT_FAMILY, color=PALETTE["text"]),
+                      separators=",." if LANG == "pt" else ".,", paper_bgcolor=PALETTE["paper"],
+                      plot_bgcolor=PALETTE["paper"])
     return fig
 
 
@@ -574,22 +612,70 @@ def change_language():
         st.query_params["lang"] = choice
 
 
+def change_theme():
+    choice = st.session_state.get("mb_theme_choice")
+    if choice in ("light", "dark") and choice != THEME:
+        st.session_state["mb_theme_pending"] = choice
+        st.query_params["theme"] = choice
+        st.query_params["lang"] = LANG
+
+
+def apply_theme_js(target, reload_page):
+    """Store Streamlit's active-theme choice in the browser and reload once.
+
+    Streamlit reads its light/dark choice from localStorage at page load
+    (the same setting as Settings → Theme), so it persists across visits.
+    """
+    value = "Dark" if target == "dark" else "Light"
+    st.sidebar.container(key="mb_theme_js").html(f"""<script>
+    (function() {{
+      try {{
+        var key = "stActiveTheme-" + window.location.pathname + "-v2";
+        var stored = window.localStorage.getItem(key);
+        var unset = stored === null || stored === '"System"';
+        if ({'true' if reload_page else 'false'} || unset) {{
+          window.localStorage.setItem(key, JSON.stringify("{value}"));
+          if ({'true' if reload_page else 'false'} || "{THEME}" !== "{target}") window.location.reload();
+        }}
+      }} catch (e) {{ console.warn("theme switch failed", e); }}
+    }})();
+    </script>""", unsafe_allow_javascript=True)
+
+
 def reset_filters():
     for key in list(st.session_state.keys()):
-        if key not in ("lang", "mb_lang_choice"):
+        if key not in ("lang", "mb_lang_choice", "mb_theme_choice", "mb_theme_init"):
             del st.session_state[key]
 
 
 # ------------------------------- Header ------------------------------------
 hero = st.container(key="mb_hero")
 with hero:
-    hero_text, hero_lang = st.columns([5, 1], vertical_alignment="top")
+    hero_text, hero_lang = st.columns([4, 1.5], vertical_alignment="top")
     hero_slot = hero_text.empty()
     with hero_lang:
-        with st.container(key="mb_lang", horizontal_alignment="right"):
+        with st.container(key="mb_lang", horizontal=True, horizontal_alignment="right"):
             st.segmented_control(t("language"), list(i18n.LANGS), default=LANG, required=True,
                                  format_func=lambda k: i18n.LANGS[k], key="mb_lang_choice",
                                  on_change=change_language)
+            if st.session_state.get("mb_theme_choice") not in ("light", "dark"):
+                st.session_state["mb_theme_choice"] = THEME
+            st.segmented_control(t("theme"), ["light", "dark"], required=True,
+                                 format_func=lambda k: ":material/light_mode:" if k == "light" else ":material/dark_mode:",
+                                 key="mb_theme_choice", on_change=change_theme)
+
+# Pending switch from the toggle: store it in the browser and reload once.
+if st.session_state.get("mb_theme_pending"):
+    apply_theme_js(st.session_state.pop("mb_theme_pending"), reload_page=True)
+elif "mb_theme_init" not in st.session_state:
+    # First run of a browser session: honor ?theme=..., otherwise default to light
+    # (only when the visitor never chose a theme; system dark mode is not imposed).
+    st.session_state["mb_theme_init"] = True
+    wanted = str(st.query_params.get("theme", "")).lower()
+    if wanted in ("light", "dark") and wanted != THEME:
+        apply_theme_js(wanted, reload_page=True)
+    else:
+        apply_theme_js("light", reload_page=False)
 
 
 def render_hero(chips=()):
@@ -731,10 +817,10 @@ if filtered.empty:
 filtered["territory_label"] = filtered["territory_id"].map(label_of).fillna(filtered["territory_name"])
 
 kpis = [
-    ("🗺️", "#E6F2F8", t("kpi_units"), fmt_num(filtered.territory_id.nunique(), ",d")),
-    ("📊", "#E7F4EE", t("kpi_obs"), fmt_num(len(filtered), ",d")),
-    ("🧪", "#F3EEF8", t("kpi_vars"), f"{len(selected)} / {len(metrics)}"),
-    ("🗓️", "#FDF1E4", t("kpi_dates"), dates_text),
+    ("🗺️", PALETTE["kpi_bg"][0], t("kpi_units"), fmt_num(filtered.territory_id.nunique(), ",d")),
+    ("📊", PALETTE["kpi_bg"][1], t("kpi_obs"), fmt_num(len(filtered), ",d")),
+    ("🧪", PALETTE["kpi_bg"][2], t("kpi_vars"), f"{len(selected)} / {len(metrics)}"),
+    ("🗓️", PALETTE["kpi_bg"][3], t("kpi_dates"), dates_text),
 ]
 st.markdown('<div class="mb-kpis">' + "".join(
     f'<div class="mb-kpi"><div class="ic" style="background:{bg}">{ic}</div><div><div class="lb">{lb}</div>'
@@ -955,7 +1041,7 @@ with tab_series:
                 fig = px.line(plot_long, x="time", y="plot_value", color="variable_label", line_dash="territory_label",
                     color_discrete_map=colors, hover_data=["territory_label", "value", "unit"], labels=labels)
                 fig.add_hline(y=100 if chart_mode == "index" else 0, line_width=1,
-                    line_dash="dot", line_color="#7A8790", opacity=.85)
+                    line_dash="dot", line_color=PALETTE["ref"], opacity=.85)
                 if chart_mode == "ztraj":
                     # Diverging marker colors encode the signed anomaly at each date;
                     # line colors still identify the metric across all plots.
@@ -1004,7 +1090,7 @@ with tab_reg:
             with leg:
                 if hue == "None":
                     fig = px.scatter(scatter, x=xvar, y=yvar, color="territory_label",
-                        color_discrete_sequence=SERIES_COLORS,
+                        color_discrete_sequence=SERIES,
                         size="marker_size" if sz != "None" else None, hover_data=time_cols,
                         labels=scatter_labels, opacity=.65)
                 else:
@@ -1019,7 +1105,7 @@ with tab_reg:
                     yy = fit["slope"] * xx + fit["intercept"]
                     fig.add_trace(go.Scatter(x=xx, y=yy, mode="lines",
                         name=t("ols_line", r2=fmt_num(fit["r2"], ".3f"), p=format_p(fit["p_value"])),
-                        line=dict(color="#1B364A", width=3, dash="dash"), hovertemplate=t("ols_hover") + "<extra></extra>"))
+                        line=dict(color=PALETTE["fit"], width=3, dash="dash"), hovertemplate=t("ols_hover") + "<extra></extra>"))
                 st.plotly_chart(prettify(fig, 500), width="stretch")
             with statscol:
                 st.markdown(f'<div class="mb-label">{t("pooled_ols")}</div>', unsafe_allow_html=True)
@@ -1065,7 +1151,7 @@ with tab_reg:
                     subset = subset.replace([np.inf, -np.inf], np.nan).dropna(subset=[xvar, yvar, zvar])
                     if not subset.empty:
                         fig = px.scatter_3d(subset, x=xvar, y=yvar, z=zvar, color="territory_label",
-                            color_discrete_sequence=SERIES_COLORS, opacity=.75,
+                            color_discrete_sequence=SERIES, opacity=.75,
                             hover_data=time_cols, height=570,
                             labels=dict(scatter_labels, **{zvar: metric_label(zvar, meta)}))
                         fig.update_layout(margin=dict(l=0, r=0, t=25, b=0), legend_title_text="")
@@ -1137,7 +1223,7 @@ with tab_corr:
             seas[seas_var] = pd.to_numeric(seas[seas_var], errors="coerce")
             seas = seas.groupby(["territory_label", "month"], as_index=False)[seas_var].mean()
             fig = px.line(seas, x="month", y=seas_var, color="territory_label",
-                color_discrete_sequence=SERIES_COLORS, markers=True,
+                color_discrete_sequence=SERIES, markers=True,
                 labels=dict(axis_names, **{seas_var: metric_label(seas_var, meta)}))
             fig.update_xaxes(tickmode="array", tickvals=list(range(1, 13)), ticktext=MONTH_NAMES)
             st.plotly_chart(prettify(fig, 360), width="stretch")

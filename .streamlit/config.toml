@@ -1,13 +1,23 @@
 [theme]
+font = "sans serif"
+baseRadius = "0.6rem"
+showWidgetBorder = true
+
+[theme.light]
 base = "light"
 primaryColor = "#2477A5"
 backgroundColor = "#FAFCFD"
 secondaryBackgroundColor = "#EEF4F6"
 textColor = "#163548"
-font = "sans serif"
-baseRadius = "0.6rem"
 borderColor = "#D7E3E8"
-showWidgetBorder = true
+
+[theme.dark]
+base = "dark"
+primaryColor = "#4FB3D9"
+backgroundColor = "#050708"
+secondaryBackgroundColor = "#141B20"
+textColor = "#E8F1F5"
+borderColor = "#26333B"
 
 [client]
 toolbarMode = "minimal"
